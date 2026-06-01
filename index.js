@@ -4,6 +4,7 @@ const http    = require('http');
 const { Server } = require('socket.io');
 const cors    = require('cors');
 const helmet  = require('helmet');
+const authEmailRoutes = require('./routes/auth_email');
 
 const userRoutes      = require('./routes/users');
 const feedRoutes      = require('./routes/feed');
@@ -32,6 +33,7 @@ const io = new Server(server, {
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 app.use(express.json());
+app.use('/auth', authEmailRoutes);
 
 if (process.env.NODE_ENV !== 'production') {
   app.use((req, _res, next) => { console.log(`${req.method} ${req.path}`); next(); });

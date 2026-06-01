@@ -1,0 +1,12 @@
+# Desde la carpeta backend
+@"
+node_modules/
+.env
+*.log
+"@ | Set-Content .gitignore
+
+# Quitar node_modules del tracking de git
+git rm -r --cached node_modules
+git add .
+git commit -m "Remove node_modules, add gitignore"
+git push
