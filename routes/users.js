@@ -149,4 +149,40 @@ function sanitizeUser(user) {
   return safe;
 }
 
+// Instalar: npm install cloudinary
+const cloudinary = require('cloudinary').v2;
+ 
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key:    process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+ 
+// POST /user/avatar
+router.post('/avatar', auth, async (req, res) => {
+  const { image_base64 } = req.body;
+  if (!image_base64) return res.status(400).json({ error: 'image_base64 requerido' });
+ 
+  try {
+    const result = await cloudinary.uploader.upload(image_base64, {
+      folder:         'zas_avatars',
+      public_id:      `avatar_${req.user.id}`,
+      overwrite:      true,
+      transformation: [{ width: 200, height: 200, crop: 'fill', gravity: 'face' }],
+    });
+ 
+    const avatarUrl = result.secure_url;
+ 
+    await pool.query(
+      'UPDATE users SET avatar_url = $1 WHERE id = $2',
+      [avatarUrl, req.user.id]
+    );
+ 
+    res.json({ avatar_url: avatarUrl });
+  } catch (err) {
+    console.error('Avatar upload error:', err);
+    res.status(500).json({ error: 'Error al subir la imagen' });
+  }
+});
+
 module.exports = router;
