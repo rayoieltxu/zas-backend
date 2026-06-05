@@ -159,3 +159,23 @@ function sanitize(user) {
 }
 
 module.exports = router;
+
+
+// ── GET /user/active-count ────────────────────────────────────────────────────
+// Devuelve cuántos usuarios han estado activos en los últimos 15 minutos en la zona
+router.get('/active-count', auth, async (req, res) => {
+  const { geohash } = req.query;
+  if (!geohash) return res.status(400).json({ error: 'geohash required' });
+  try {
+    const zonePrefix = geohash.slice(0, 5);
+    const result = await pool.query(
+      `SELECT COUNT(*) AS count FROM users
+       WHERE current_geohash LIKE $1
+         AND last_active > NOW() - INTERVAL '15 minutes'`,
+      [`${zonePrefix}%`]
+    );
+    res.json({ count: parseInt(result.rows[0].count) });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});

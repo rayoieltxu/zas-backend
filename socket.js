@@ -1,127 +1,101 @@
+/**
+ * socket.js (BACKEND) — reemplaza el actual backend/socket.js
+ * Gestiona conexiones, mensajes de chat, ubicación y notificaciones de votos
+ */
 const pool = require('./db/pool');
 
-/**
- * Configura Socket.io para el backend de Zas
- * Maneja: autenticación, chat de zona, actualizaciones de monedas
- */
-function setupSocket(io) {
-  // Middleware de autenticación para sockets
-  io.use(async (socket, next) => {
+// Mapa: userId → Set de socket IDs
+const userSockets = new Map();
+
+module.exports = function setupSocket(io) {
+
+  io.on('connection', async (socket) => {
     const deviceId = socket.handshake.auth?.device_id;
-    if (!deviceId) return next(new Error('Missing device_id'));
+    let userId     = null;
 
-    try {
-      const result = await pool.query(
-        'SELECT * FROM users WHERE device_id = $1',
-        [deviceId]
-      );
-      if (result.rows.length === 0) return next(new Error('User not registered'));
-      socket.user = result.rows[0];
-      next();
-    } catch (err) {
-      next(new Error('Auth error'));
+    // ── Autenticar por device_id ──────────────────────────────────────────────
+    if (deviceId) {
+      try {
+        const result = await pool.query(
+          'SELECT id FROM users WHERE device_id = $1', [deviceId]
+        );
+        if (result.rows.length > 0) {
+          userId = result.rows[0].id;
+          if (!userSockets.has(userId)) userSockets.set(userId, new Set());
+          userSockets.get(userId).add(socket.id);
+          console.log(`🔌 Socket connected: ${deviceId} (user: ${userId})`);
+        }
+      } catch (err) {
+        console.error('Socket auth error:', err);
+      }
     }
-  });
 
-  io.on('connection', (socket) => {
-    console.log(`🔌 Socket connected: ${socket.user?.public_name}`);
+    // ── Unirse a zona ─────────────────────────────────────────────────────────
+    socket.on('update_location', ({ geohash }) => {
+      // Salir de zonas anteriores
+      socket.rooms.forEach(room => {
+        if (room !== socket.id && room.startsWith('zone:')) {
+          socket.leave(room);
+        }
+      });
+      if (geohash) {
+        const zone = `zone:${geohash.slice(0, 5)}`;
+        socket.join(zone);
+      }
+    });
 
-    // Unirse a zona automáticamente
-    const zone = socket.user?.current_geohash;
-    if (zone) socket.join(`zone:${zone}`);
-
-    // ── Enviar mensaje de chat ────────────────────────────────────────────────
-    socket.on('send_message', async ({ zone_id, text }) => {
-      if (!text || !zone_id || text.length > 500) return;
-
+    // ── Mensajes de chat ──────────────────────────────────────────────────────
+    socket.on('send_message', async ({ text, zone_id }) => {
+      if (!userId || !text?.trim() || !zone_id) return;
       try {
         const result = await pool.query(
           `INSERT INTO chat_messages (zone_id, user_id, text)
-           VALUES ($1, $2, $3)
-           RETURNING id, zone_id, user_id, text, created_at`,
-          [zone_id, socket.user.id, text.trim()]
+           VALUES ($1, $2, $3) RETURNING id, created_at`,
+          [zone_id, userId, text.trim().slice(0, 500)]
         );
-
-        const msg = result.rows[0];
-        const payload = {
-          ...msg,
-          public_name: socket.user.public_name,
+        const userRow = await pool.query(
+          'SELECT public_name FROM users WHERE id = $1', [userId]
+        );
+        const msg = {
+          id:          result.rows[0].id,
+          text:        text.trim(),
+          zone_id,
+          user_id:     userId,
+          author_name: userRow.rows[0]?.public_name || 'Anónimo',
+          created_at:  result.rows[0].created_at,
         };
+        io.to(`zone:${zone_id.slice(0, 5)}`).emit('new_message', msg);
 
-        // Emitir a todos en la zona (incluyendo emisor)
-        io.to(`zone:${zone_id}`).emit('new_message', payload);
-
-        // Actualizar last_active
-        pool.query(
-          'UPDATE users SET last_active = NOW() WHERE id = $1',
-          [socket.user.id]
-        ).catch(() => {});
-
+        // Monedas por mensaje
+        try {
+          const { awardCoins } = require('./services/economy');
+          const earned = await awardCoins(userId, 'message');
+          if (earned > 0) emitToUser(io, userSockets, userId, 'coins_earned', { amount: earned, reason: 'message' });
+        } catch {}
       } catch (err) {
-        console.error('send_message error:', err);
-        socket.emit('error', { message: 'Error sending message' });
+        console.error('Send message error:', err);
       }
     });
 
-    // ── Unirse a zona específica ──────────────────────────────────────────────
-    socket.on('join_zone', ({ zone_id }) => {
-      if (zone_id) {
-        socket.rooms.forEach(room => {
-          if (room.startsWith('zone:')) socket.leave(room);
-        });
-        socket.join(`zone:${zone_id}`);
-      }
-    });
-
-    // ── Unirse a canal ────────────────────────────────────────────────────────
-    socket.on('join_channel', ({ channel_id }) => {
-      if (channel_id) socket.join(`channel:${channel_id}`);
-    });
-
-    socket.on('leave_channel', ({ channel_id }) => {
-      if (channel_id) socket.leave(`channel:${channel_id}`);
-    });
-
-    // ── Mensaje de canal ──────────────────────────────────────────────────────
-    socket.on('send_channel_message', async ({ channel_id, text }) => {
-      if (!text || !channel_id || text.length > 500) return;
-
-      try {
-        const result = await pool.query(
-          `INSERT INTO channel_messages (channel_id, user_id, text)
-           VALUES ($1, $2, $3)
-           RETURNING id, channel_id, user_id, text, created_at`,
-          [channel_id, socket.user.id, text.trim()]
-        );
-
-        const msg = result.rows[0];
-        io.to(`channel:${channel_id}`).emit('new_channel_message', {
-          ...msg,
-          public_name: socket.user.public_name,
-        });
-      } catch (err) {
-        console.error('send_channel_message error:', err);
-      }
-    });
-
-    // ── Notificación de monedas (emitida desde rutas) ─────────────────────────
+    // ── Desconexión ───────────────────────────────────────────────────────────
     socket.on('disconnect', () => {
-      console.log(`🔌 Socket disconnected: ${socket.user?.public_name}`);
+      if (userId && userSockets.has(userId)) {
+        userSockets.get(userId).delete(socket.id);
+        if (userSockets.get(userId).size === 0) userSockets.delete(userId);
+      }
+      console.log(`🔌 Socket disconnected: ${deviceId || socket.id}`);
     });
   });
 
-  // Exponer función para emitir desde rutas
-  io.emitCoinsUpdate = (userId, coins) => {
-    // Buscar socket del usuario y notificar
-    for (const [, s] of io.sockets.sockets) {
-      if (s.user?.id === userId) {
-        s.emit('coins_update', { coins });
-        break;
-      }
-    }
-  };
+  // Exponer función para notificar a un usuario desde routes
+  io.notifyUser = (userId, event, data) => emitToUser(io, userSockets, userId, event, data);
+};
 
-  return io;
+function emitToUser(io, userSockets, userId, event, data) {
+  const sockets = userSockets.get(userId);
+  if (sockets && sockets.size > 0) {
+    sockets.forEach(socketId => {
+      io.to(socketId).emit(event, data);
+    });
+  }
 }
-
-module.exports = setupSocket;

@@ -4,7 +4,6 @@ const http    = require('http');
 const { Server } = require('socket.io');
 const cors    = require('cors');
 const helmet  = require('helmet');
-const authEmailRoutes = require('./routes/auth_email');
 
 const userRoutes      = require('./routes/users');
 const feedRoutes      = require('./routes/feed');
@@ -16,24 +15,26 @@ const pollRoutes      = require('./routes/polls');
 const channelRoutes   = require('./routes/channels');
 const clanRoutes      = require('./routes/clans');
 const rankingRoutes   = require('./routes/ranking');
-const reportRoutes    = require('./routes/reports');   // ← FASE 4
-const visitorRoutes   = require('./routes/visitors');  // ← FASE 4
+const reportRoutes    = require('./routes/reports');
+const visitorRoutes   = require('./routes/visitors');
+const authEmailRoutes = require('./routes/auth_email');
+const reactionsRoutes = require('./routes/reactions');
 const setupSocket     = require('./socket');
 const pool            = require('./db/pool');
-const { cleanChaosPostsIfNeeded }  = require('./services/chaos');
-const { recalcWeeklyPoints }       = require('./routes/clans');
+const { cleanChaosPostsIfNeeded } = require('./services/chaos');
+const { recalcWeeklyPoints }      = require('./routes/clans');
 
 const app    = express();
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: { origin: process.env.CORS_ORIGIN || '*', methods: ['GET', 'POST'] },
+  cors: { origin: process.env.CORS_ORIGIN || '*', methods: ['GET','POST'] },
 });
 
+app.set('io', io);
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
-app.use(express.json());
-app.use('/auth', authEmailRoutes);
+app.use(express.json({ limit: '10mb' }));
 
 if (process.env.NODE_ENV !== 'production') {
   app.use((req, _res, next) => { console.log(`${req.method} ${req.path}`); next(); });
@@ -41,6 +42,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 app.get('/health', (_req, res) => res.json({ ok: true, time: new Date() }));
 
+app.use('/auth',       authEmailRoutes);
 app.use('/user',       userRoutes);
 app.use('/feed',       feedRoutes);
 app.use('/chat',       chatRoutes);
@@ -52,8 +54,9 @@ app.use('/channels',   channelRoutes);
 app.use('/clans',      clanRoutes);
 app.use('/schools',    rankingRoutes);
 app.use('/top3',       rankingRoutes);
-app.use('/reports',    reportRoutes);   // ← FASE 4
-app.use('/visitor',    visitorRoutes);  // ← FASE 4
+app.use('/reports',    reportRoutes);
+app.use('/visitor',    visitorRoutes);
+app.use('/reactions',  reactionsRoutes);
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err, _req, res, _next) => {
@@ -63,15 +66,12 @@ app.use((err, _req, res, _next) => {
 
 setupSocket(io);
 
-// ── Crons ─────────────────────────────────────────────────────────────────────
-setInterval(() => cleanChaosPostsIfNeeded(pool), 2 * 60 * 1000);
+setInterval(() => cleanChaosPostsIfNeeded(pool),  2 * 60 * 1000);
 setInterval(() => recalcWeeklyPoints(pool),       60 * 60 * 1000);
-
-// Limpiar visitas expiradas cada hora
 setInterval(async () => {
   try {
     const r = await pool.query('DELETE FROM visitors WHERE expires_at <= NOW()');
-    if (r.rowCount > 0) console.log(`🧹 Cleaned ${r.rowCount} expired visitor records`);
+    if (r.rowCount > 0) console.log(`🧹 Cleaned ${r.rowCount} expired visitors`);
   } catch (err) { console.error('Visitor cleanup error:', err); }
 }, 60 * 60 * 1000);
 
