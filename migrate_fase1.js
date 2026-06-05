@@ -51,7 +51,7 @@ INSERT INTO challenges (name, description, type, metric, goal_value, reward_coin
   ('Popular del día',       'Consigue 5 upvotes hoy',                 'daily',   'upvotes_received', 5,  15,  10,  NULL),
   ('Influencer semanal',    'Consigue 50 upvotes esta semana',         'weekly',  'upvotes_received', 50, 100, 25,  'Popular'),
   ('Leyenda del mes',       'Acumula más karma que 90% de tu zona',   'monthly', 'karma_rank',        1,  500, 100, 'Leyenda')
-ON CONFLICT DO NOTHING;
+ON CONFLICT (name, type) DO NOTHING;
 
 -- Progreso individual por periodo
 CREATE TABLE IF NOT EXISTS user_challenges (
