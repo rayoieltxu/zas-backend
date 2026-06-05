@@ -161,6 +161,27 @@ function sanitize(user) {
 module.exports = router;
 
 
+// ── GET /user/:id/profile → perfil público de un usuario ─────────────────────
+router.get('/:id/profile', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT u.id, u.public_name, u.karma, u.avatar_url, u.created_at,
+              COALESCE(uc.coins, 0) AS coins,
+              COALESCE(us.current_streak, 0) AS current_streak,
+              COALESCE(us.longest_streak, 0) AS longest_streak
+       FROM users u
+       LEFT JOIN user_coins   uc ON uc.user_id = u.id
+       LEFT JOIN user_streaks us ON us.user_id = u.id
+       WHERE u.id = $1`,
+      [req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
+    res.json({ user: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ── GET /user/active-count ────────────────────────────────────────────────────
 // Devuelve cuántos usuarios han estado activos en los últimos 15 minutos en la zona
 router.get('/active-count', auth, async (req, res) => {
