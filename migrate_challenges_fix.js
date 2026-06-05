@@ -6,10 +6,10 @@ async function migrate() {
   try {
     console.log('🔧 Fixing user_challenges constraint...');
     await client.query(`
-      -- Eliminar filas duplicadas si las hay (quedarse con la más reciente)
+      -- Eliminar duplicados usando ctid (identificador interno de fila en PostgreSQL)
       DELETE FROM user_challenges a
       USING user_challenges b
-      WHERE a.id > b.id
+      WHERE a.ctid > b.ctid
         AND a.user_id      = b.user_id
         AND a.challenge_id = b.challenge_id
         AND a.period_key   = b.period_key;
