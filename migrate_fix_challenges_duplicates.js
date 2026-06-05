@@ -20,7 +20,7 @@ async function migrate() {
     // 2. Para cada grupo de duplicados, quedarnos solo con el ID más antiguo
     //    y redirigir todas las referencias de user_challenges al que sobrevive
     const groups = await client.query(`
-      SELECT name, type, MIN(id::text) AS keep_id, array_agg(id::text) AS all_ids
+      SELECT name, type, MIN(id) AS keep_id, array_agg(id) AS all_ids
       FROM challenges
       GROUP BY name, type
       HAVING COUNT(*) > 1
@@ -28,7 +28,7 @@ async function migrate() {
 
     for (const row of groups.rows) {
       const keepId  = row.keep_id;
-      const dropIds = row.all_ids.filter(id => id !== keepId);
+      const dropIds = row.all_ids.filter(id => id !== keepId).map(Number);
 
       // Redirigir user_challenges al ID que sobrevive (ignorar conflictos)
       for (const dropId of dropIds) {
@@ -52,7 +52,7 @@ async function migrate() {
 
       // Borrar los challenges duplicados
       await client.query(`
-        DELETE FROM challenges WHERE id = ANY($1::uuid[])
+        DELETE FROM challenges WHERE id = ANY($1::int[])
       `, [dropIds]);
 
       console.log(`✅ "${row.name}" (${row.type}): eliminadas ${dropIds.length} copias`);

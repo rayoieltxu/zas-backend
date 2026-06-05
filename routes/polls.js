@@ -2,7 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const pool    = require('../db/pool');
 const auth    = require('../middleware/auth');
-const { spendCoins } = require('../services/economy');
+const { spendCoins, updateChallengeProgress } = require('../services/economy');
 
 // ─── GET /polls?zone=geohash ──────────────────────────────────────────────────
 router.get('/', auth, async (req, res) => {
@@ -129,6 +129,9 @@ router.post('/:id/vote', auth, async (req, res) => {
     const total = parseInt(stats.total_votes);
 
     await client.query('COMMIT');
+
+    // Progreso de retos (fuera de la transacción para no bloquear)
+    updateChallengeProgress(req.user.id, 'polls_voted').catch(() => {});
 
     res.json({
       ok: true,

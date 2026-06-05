@@ -66,11 +66,12 @@ module.exports = function setupSocket(io) {
         };
         io.to(`zone:${zone_id.slice(0, 5)}`).emit('new_message', msg);
 
-        // Monedas por mensaje
+        // Monedas + retos por mensaje
         try {
-          const { awardCoins } = require('./services/economy');
+          const { awardCoins, updateChallengeProgress } = require('./services/economy');
           const earned = await awardCoins(userId, 'message');
           if (earned > 0) emitToUser(io, userSockets, userId, 'coins_earned', { amount: earned, reason: 'message' });
+          await updateChallengeProgress(userId, 'messages_sent');
         } catch {}
       } catch (err) {
         console.error('Send message error:', err);

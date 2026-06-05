@@ -2,7 +2,7 @@ const express  = require('express');
 const router   = express.Router();
 const pool     = require('../db/pool');
 const auth     = require('../middleware/auth');
-const { spendCoins, TREASURE_TIERS } = require('../services/economy');
+const { spendCoins, TREASURE_TIERS, updateChallengeProgress } = require('../services/economy');
 
 // ─── GET /treasures?zone=geohash ─────────────────────────────────────────────
 router.get('/', auth, async (req, res) => {
@@ -82,6 +82,9 @@ router.post('/', auth, async (req, res) => {
     );
 
     await client.query('COMMIT');
+
+    updateChallengeProgress(req.user.id, 'treasures_hidden').catch(() => {});
+
     res.status(201).json({ treasure: result.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -146,6 +149,9 @@ router.post('/:id/claim', auth, async (req, res) => {
     );
 
     await client.query('COMMIT');
+
+    updateChallengeProgress(req.user.id, 'treasures_found').catch(() => {});
+
     res.json({
       ok: true,
       reward_coins: treasure.reward_coins,
