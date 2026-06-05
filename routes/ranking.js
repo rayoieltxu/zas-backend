@@ -97,24 +97,32 @@ router.get('/historic', auth, async (req, res) => {
   }
 });
 
-// PUT /top3/social-links → el ganador actualiza sus redes
+// PUT /top3/social-links → Top 3 en vivo puede guardar sus redes en su perfil
 router.put('/social-links', auth, async (req, res) => {
   const { instagram, tiktok, twitter } = req.body;
-  const zone      = req.user.current_geohash;
-  const periodKey = new Date().toISOString().slice(0, 7);
-
-  // Validación básica de formato
-  const links = {};
-  if (instagram) links.instagram = instagram.replace(/^@/, '').trim();
-  if (tiktok)    links.tiktok    = tiktok.replace(/^@/, '').trim();
-  if (twitter)   links.twitter   = twitter.replace(/^@/, '').trim();
+  const zone = req.user.current_geohash;
 
   try {
-    await updateSocialLinks(req.user.id, zone, periodKey, links);
+    // Verificar que el usuario está en el Top 3 del ranking en vivo
+    const ranking = await getLiveRanking(zone, 3);
+    const myRank  = ranking.findIndex(r => r.id === req.user.id) + 1;
+    if (!myRank || myRank > 3) {
+      return res.status(403).json({ error: 'Solo el Top 3 puede añadir redes sociales' });
+    }
+
+    const links = {};
+    if (instagram) links.instagram = instagram.replace(/^@/, '').trim();
+    if (tiktok)    links.tiktok    = tiktok.replace(/^@/, '').trim();
+    if (twitter)   links.twitter   = twitter.replace(/^@/, '').trim();
+
+    await pool.query(
+      'UPDATE users SET social_links = $1 WHERE id = $2',
+      [JSON.stringify(links), req.user.id]
+    );
+
     res.json({ ok: true, social_links: links });
   } catch (err) {
-    if (err.message === 'NOT_IN_TOP3')
-      return res.status(403).json({ error: 'Solo el Top 3 puede añadir redes sociales' });
+    console.error('PUT /top3/social-links error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

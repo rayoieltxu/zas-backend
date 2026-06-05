@@ -20,6 +20,7 @@ async function getLiveRanking(zone, limit = 10) {
        u.public_name,
        u.karma,
        u.school_id,
+       COALESCE(u.social_links, '{}')    AS social_links,
        COALESCE(uc.coins, 0)             AS coins,
        COALESCE(us.current_streak, 0)    AS current_streak,
        COALESCE(s.name, NULL)            AS school_name,
