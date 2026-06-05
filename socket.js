@@ -54,15 +54,16 @@ module.exports = function setupSocket(io) {
           [zone_id, userId, text.trim().slice(0, 500)]
         );
         const userRow = await pool.query(
-          'SELECT public_name FROM users WHERE id = $1', [userId]
+          'SELECT public_name, avatar_url FROM users WHERE id = $1', [userId]
         );
         const msg = {
-          id:          result.rows[0].id,
-          text:        text.trim(),
+          id:            result.rows[0].id,
+          text:          text.trim(),
           zone_id,
-          user_id:     userId,
-          author_name: userRow.rows[0]?.public_name || 'Anónimo',
-          created_at:  result.rows[0].created_at,
+          user_id:       userId,
+          author_name:   userRow.rows[0]?.public_name || 'Anónimo',
+          author_avatar: userRow.rows[0]?.avatar_url  || null,
+          created_at:    result.rows[0].created_at,
         };
         io.to(`zone:${zone_id.slice(0, 5)}`).emit('new_message', msg);
 

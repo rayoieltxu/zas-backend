@@ -26,13 +26,27 @@ router.get('/', auth, async (req, res) => {
       `SELECT
         p.id, p.text, p.upvotes, p.downvotes, p.created_at, p.geohash_zone, p.is_chaos,
         u.public_name AS author_name, u.karma AS author_karma, u.avatar_url AS author_avatar,
-        v.value AS my_vote
+        v.value AS my_vote,
+        COALESCE(
+          json_agg(
+            json_build_object('emoji', pr.emoji, 'count', pr.cnt, 'my_reaction', pr.mine)
+          ) FILTER (WHERE pr.emoji IS NOT NULL),
+          '[]'
+        ) AS reactions
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
        LEFT JOIN votes v ON v.post_id = p.id AND v.user_id = $1
+       LEFT JOIN (
+         SELECT post_id, emoji,
+           COUNT(*)::int AS cnt,
+           BOOL_OR(user_id = $1) AS mine
+         FROM post_reactions
+         GROUP BY post_id, emoji
+       ) pr ON pr.post_id = p.id
        WHERE p.geohash_zone LIKE $2
          AND p.created_at > NOW() - INTERVAL '3 days'
          AND p.is_chaos = false
+       GROUP BY p.id, u.public_name, u.karma, u.avatar_url, v.value
        ORDER BY p.created_at DESC
        LIMIT $3`,
       [req.user.id, `${zonePrefix}%`, safeLimit]

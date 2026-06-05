@@ -46,8 +46,9 @@ router.post('/', auth, async (req, res) => {
   if (!TREASURE_TIERS[tier]) {
     return res.status(400).json({ error: 'Tier inválido. Usa: chispa, reliquia o leyenda' });
   }
-  if (geohash.slice(0, 5) === req.user.current_geohash.slice(0, 5)) {
-    return res.status(400).json({ error: 'El tesoro debe estar en una zona diferente a la tuya' });
+  // 4 chars ≈ 25 km — permite esconder en zonas vecinas pero no justo encima
+  if (geohash.slice(0, 4) === req.user.current_geohash.slice(0, 4)) {
+    return res.status(400).json({ error: 'El tesoro debe estar en una zona más alejada de donde estás tú' });
   }
 
   const tierCfg = TREASURE_TIERS[tier];

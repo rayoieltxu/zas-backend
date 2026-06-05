@@ -14,6 +14,7 @@ router.get('/history', auth, async (req, res) => {
       `SELECT
         m.id, m.text, m.created_at, m.zone_id,
         u.public_name AS author_name,
+        u.avatar_url  AS author_avatar,
         u.id AS user_id
        FROM chat_messages m
        LEFT JOIN users u ON m.user_id = u.id
