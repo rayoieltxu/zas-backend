@@ -217,11 +217,12 @@ function getPeriodKey(type, date = new Date()) {
 }
 
 // ─── getChallengesForUser ─────────────────────────────────────────────────────
-// UNA SOLA QUERY — sin duplicados
 async function getChallengesForUser(userId) {
   const now = new Date();
+  // DISTINCT ON (c.id) garantiza que nunca llegan duplicados aunque la tabla
+  // challenges tenga filas repetidas o user_challenges tenga varios registros.
   const result = await pool.query(
-    `SELECT
+    `SELECT DISTINCT ON (c.id)
        c.id, c.name, c.description, c.type, c.metric, c.goal_value,
        c.reward_coins, c.reward_karma, c.badge_name,
        COALESCE(uc.progress, 0)       AS progress,
@@ -237,8 +238,8 @@ async function getChallengesForUser(userId) {
              WHEN 'monthly' THEN $4
            END
      ORDER BY
-       CASE c.type WHEN 'daily' THEN 1 WHEN 'weekly' THEN 2 ELSE 3 END,
-       c.id`,
+       c.id,
+       CASE c.type WHEN 'daily' THEN 1 WHEN 'weekly' THEN 2 ELSE 3 END`,
     [
       userId,
       getPeriodKey('daily',   now),
@@ -246,7 +247,10 @@ async function getChallengesForUser(userId) {
       getPeriodKey('monthly', now),
     ]
   );
-  return result.rows;
+
+  // Ordenar en memoria por tipo después del DISTINCT
+  const order = { daily: 1, weekly: 2, monthly: 3 };
+  return result.rows.sort((a, b) => (order[a.type] || 9) - (order[b.type] || 9));
 }
 
 // ─── getTransactionHistory ────────────────────────────────────────────────────
