@@ -10,12 +10,21 @@ const DAILY_LIMITS = {
 };
 
 const COSTS = {
-  buy_name:        50,
-  highlight_post:  100,
-  create_channel:  200,
-  create_treasure: 50,
-  create_poll:     30,
-  travel_zone:     50,
+  buy_name:               50,
+  highlight_post:         100,
+  create_channel:         200,
+  create_treasure:        50,   // tier chispa
+  create_treasure_reliquia: 150,
+  create_treasure_leyenda:  300,
+  create_poll:            30,
+  travel_zone:            50,
+};
+
+// Configuración de tiers de tesoros
+const TREASURE_TIERS = {
+  chispa:   { cost: 50,  reward_coins: 25,  reward_karma: 10, label: 'Chispa ✨'   },
+  reliquia: { cost: 150, reward_coins: 80,  reward_karma: 30, label: 'Reliquia 💠' },
+  leyenda:  { cost: 300, reward_coins: 175, reward_karma: 75, label: 'Leyenda 👑'  },
 };
 
 // ─── awardCoins ───────────────────────────────────────────────────────────────
@@ -257,5 +266,5 @@ module.exports = {
   awardCoins, spendCoins, getCoins,
   updateStreak, updateChallengeProgress,
   getChallengesForUser, getTransactionHistory,
-  getPeriodKey, COSTS, DAILY_LIMITS,
+  getPeriodKey, COSTS, DAILY_LIMITS, TREASURE_TIERS,
 };
