@@ -8,7 +8,7 @@ const { sendPush } = require('../services/push');
 router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT c.id, c.text, c.created_at,
+      `SELECT c.id, c.text, c.gif_url, c.created_at,
               u.public_name AS author_name, u.avatar_url AS author_avatar,
               c.user_id,
               (c.user_id = $1) AS is_mine
@@ -25,14 +25,16 @@ router.get('/', auth, async (req, res) => {
 
 // POST /feed/:postId/comments
 router.post('/', auth, async (req, res) => {
-  const { text } = req.body;
-  if (!text?.trim() || text.trim().length > 500)
-    return res.status(400).json({ error: 'Texto inválido (máx 500 chars)' });
+  const { text, gif_url } = req.body;
+  if (!text?.trim() && !gif_url)
+    return res.status(400).json({ error: 'Texto o GIF requerido' });
+  if (text && text.trim().length > 500)
+    return res.status(400).json({ error: 'Máx 500 caracteres' });
   try {
     const result = await pool.query(
-      `INSERT INTO post_comments (post_id, user_id, text)
-       VALUES ($1,$2,$3) RETURNING *`,
-      [req.params.postId, req.user.id, text.trim()]
+      `INSERT INTO post_comments (post_id, user_id, text, gif_url)
+       VALUES ($1,$2,$3,$4) RETURNING *`,
+      [req.params.postId, req.user.id, text?.trim() || '', gif_url || null]
     );
     const comment = result.rows[0];
 
@@ -73,6 +75,7 @@ router.post('/', auth, async (req, res) => {
         author_name:   req.user.public_name,
         author_avatar: req.user.avatar_url || null,
         is_mine: true,
+        gif_url:       gif_url || null,
       }
     });
   } catch (err) { res.status(500).json({ error: 'Internal server error' }); }

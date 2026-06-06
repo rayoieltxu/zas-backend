@@ -33,6 +33,21 @@ router.get('/', auth, async (req, res) => {
         CASE WHEN p.is_anonymous THEN 'Anónimo' ELSE u.public_name END AS author_name,
         CASE WHEN p.is_anonymous THEN NULL ELSE u.karma END AS author_karma,
         CASE WHEN p.is_anonymous THEN NULL ELSE u.avatar_url END AS author_avatar,
+        CASE WHEN p.is_anonymous THEN NULL ELSE
+          (SELECT json_build_object('icon', si.icon, 'rarity', si.rarity, 'name', si.name)
+           FROM user_items ui JOIN shop_items si ON si.id = ui.item_id
+           WHERE ui.user_id = p.user_id AND ui.equipped = true AND si.type = 'frame' LIMIT 1)
+        END AS author_frame,
+        CASE WHEN p.is_anonymous THEN NULL ELSE
+          (SELECT json_build_object('icon', si.icon, 'rarity', si.rarity, 'name', si.name)
+           FROM user_items ui JOIN shop_items si ON si.id = ui.item_id
+           WHERE ui.user_id = p.user_id AND ui.equipped = true AND si.type = 'badge' LIMIT 1)
+        END AS author_badge,
+        CASE WHEN p.is_anonymous THEN NULL ELSE
+          (SELECT json_build_object('icon', si.icon, 'name', si.name)
+           FROM user_items ui JOIN shop_items si ON si.id = ui.item_id
+           WHERE ui.user_id = p.user_id AND ui.equipped = true AND si.type = 'title' LIMIT 1)
+        END AS author_title,
         v.value AS my_vote,
         (SELECT COUNT(*)::int FROM post_comments WHERE post_id = p.id) AS comments_count,
         COALESCE(

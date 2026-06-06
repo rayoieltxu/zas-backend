@@ -111,17 +111,29 @@ router.post('/register', async (req, res) => {
 // ── GET /user/me ──────────────────────────────────────────────────────────────
 router.get('/me', auth, async (req, res) => {
   try {
-    const [coinsRow, streakRow] = await Promise.all([
+    const [coinsRow, streakRow, equippedRow] = await Promise.all([
       pool.query('SELECT coins FROM user_coins WHERE user_id=$1', [req.user.id]),
       pool.query('SELECT * FROM user_streaks WHERE user_id=$1', [req.user.id]),
+      pool.query(
+        `SELECT si.id, si.name, si.type, si.icon, si.rarity, si.description
+         FROM user_items ui
+         JOIN shop_items si ON si.id=ui.item_id
+         WHERE ui.user_id=$1 AND ui.equipped=true`,
+        [req.user.id]
+      ),
     ]);
     const user = { ...req.user };
     delete user.device_id;
+    // Agrupar items equipados por tipo para fácil acceso
+    const equipped = {};
+    for (const item of equippedRow.rows) equipped[item.type] = item;
     res.json({
       user: {
         ...user,
-        coins:  coinsRow.rows[0]?.coins ?? 0,
-        streak: streakRow.rows[0] ?? { current_streak: 0, longest_streak: 0 },
+        coins:   coinsRow.rows[0]?.coins ?? 0,
+        streak:  streakRow.rows[0] ?? { current_streak: 0, longest_streak: 0 },
+        equipped,           // { frame: {...}, badge: {...}, title: {...}, emoji_pack: {...} }
+        equipped_list: equippedRow.rows,
       }
     });
   } catch (err) {
