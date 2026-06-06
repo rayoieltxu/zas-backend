@@ -19,6 +19,7 @@ const reportRoutes    = require('./routes/reports');
 const visitorRoutes   = require('./routes/visitors');
 const authEmailRoutes = require('./routes/auth_email');
 const reactionsRoutes = require('./routes/reactions');
+const socialRoutes    = require('./routes/social');
 const setupSocket     = require('./socket');
 const pool            = require('./db/pool');
 const { cleanChaosPostsIfNeeded } = require('./services/chaos');
@@ -57,6 +58,7 @@ app.use('/top3',       rankingRoutes);
 app.use('/reports',    reportRoutes);
 app.use('/visitor',    visitorRoutes);
 app.use('/reactions',  reactionsRoutes);
+app.use('/social',     socialRoutes);
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err, _req, res, _next) => {

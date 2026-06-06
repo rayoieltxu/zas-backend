@@ -8,6 +8,7 @@ const pool    = require('../db/pool');
 const auth    = require('../middleware/auth');
 const { awardCoins, updateStreak, updateChallengeProgress } = require('../services/economy');
 const { getChaosState, noChaosDownvote } = require('../services/chaos');
+const { sendPush } = require('../services/push');
 
 function heatScore(upvotes, downvotes, createdAt) {
   const hours = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60);
@@ -16,10 +17,11 @@ function heatScore(upvotes, downvotes, createdAt) {
 
 // ─── GET /feed ────────────────────────────────────────────────────────────────
 router.get('/', auth, async (req, res) => {
-  const { zone, limit = 50 } = req.query;
-  const targetZone = zone || req.user.current_geohash;
-  const safeLimit  = Math.min(parseInt(limit) || 50, 200);
-  const zonePrefix = targetZone.slice(0, 5);
+  const { zone, limit = 30, offset = 0 } = req.query;
+  const targetZone  = zone || req.user.current_geohash;
+  const safeLimit   = Math.min(parseInt(limit)  || 30, 100);
+  const safeOffset  = Math.max(parseInt(offset) || 0,  0);
+  const zonePrefix  = targetZone.slice(0, 5);
 
   try {
     const result = await pool.query(
@@ -48,8 +50,8 @@ router.get('/', auth, async (req, res) => {
          AND p.is_chaos = false
        GROUP BY p.id, u.public_name, u.karma, u.avatar_url, v.value
        ORDER BY p.created_at DESC
-       LIMIT $3`,
-      [req.user.id, `${zonePrefix}%`, safeLimit]
+       LIMIT $3 OFFSET $4`,
+      [req.user.id, `${zonePrefix}%`, safeLimit, safeOffset]
     );
 
     const sorted = result.rows.sort(
@@ -60,6 +62,8 @@ router.get('/', auth, async (req, res) => {
     const chaos = getChaosState();
     res.json({
       posts: sorted,
+      has_more: result.rows.length === safeLimit,
+      offset: safeOffset,
       zone: targetZone,
       chaos,
       is_visitor: req.user.is_visitor || false,
@@ -206,14 +210,18 @@ router.post('/vote/:postId', auth, noChaosDownvote, async (req, res) => {
         try {
           const earned = await awardCoins(authorId, 'upvote_received');
           await updateChallengeProgress(authorId, 'upvotes_received');
-          // Notificar via socket
           if (earned > 0 && req.app?.get('io')?.notifyUser) {
             req.app.get('io').notifyUser(authorId, 'coins_earned', { amount: earned, reason: 'upvote_received' });
           }
           if (req.app?.get('io')?.notifyUser) {
-            req.app.get('io').notifyUser(authorId, 'vote_received', {
-              post_id: postId,
-              voter:   req.user.public_name,
+            req.app.get('io').notifyUser(authorId, 'vote_received', { post_id: postId, voter: req.user.public_name });
+          }
+          // Push notification
+          if (value === 1) {
+            sendPush(authorId, {
+              title: '⬆️ Nuevo upvote',
+              body:  `${req.user.public_name || 'Alguien'} votó tu post`,
+              data:  { type: 'upvote', post_id: postId },
             });
           }
         } catch (e) { console.error('Economy upvote error:', e); }

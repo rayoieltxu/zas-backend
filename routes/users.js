@@ -161,6 +161,23 @@ function sanitize(user) {
 module.exports = router;
 
 
+// ── POST /user/push-token → registrar token de notificaciones ────────────────
+router.post('/push-token', auth, async (req, res) => {
+  const { token, platform = 'android' } = req.body;
+  if (!token) return res.status(400).json({ error: 'token required' });
+  try {
+    await pool.query(
+      `INSERT INTO push_tokens (user_id, token, platform, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id) DO UPDATE SET token=$2, platform=$3, updated_at=NOW()`,
+      [req.user.id, token, platform]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ── GET /user/:id/profile → perfil público de un usuario ─────────────────────
 router.get('/:id/profile', auth, async (req, res) => {
   try {
@@ -168,12 +185,15 @@ router.get('/:id/profile', auth, async (req, res) => {
       `SELECT u.id, u.public_name, u.karma, u.avatar_url, u.created_at,
               COALESCE(uc.coins, 0) AS coins,
               COALESCE(us.current_streak, 0) AS current_streak,
-              COALESCE(us.longest_streak, 0) AS longest_streak
+              COALESCE(us.longest_streak, 0) AS longest_streak,
+              (SELECT COUNT(*) FROM follows WHERE following_id = u.id)::int AS followers_count,
+              (SELECT COUNT(*) FROM follows WHERE follower_id  = u.id)::int AS following_count,
+              EXISTS(SELECT 1 FROM follows WHERE follower_id=$2 AND following_id=u.id) AS is_following
        FROM users u
        LEFT JOIN user_coins   uc ON uc.user_id = u.id
        LEFT JOIN user_streaks us ON us.user_id = u.id
        WHERE u.id = $1`,
-      [req.params.id]
+      [req.params.id, req.user.id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
     res.json({ user: result.rows[0] });

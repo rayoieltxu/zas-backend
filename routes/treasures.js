@@ -3,6 +3,7 @@ const router   = express.Router();
 const pool     = require('../db/pool');
 const auth     = require('../middleware/auth');
 const { spendCoins, TREASURE_TIERS, updateChallengeProgress } = require('../services/economy');
+const { sendPush } = require('../services/push');
 
 // ─── GET /treasures?zone=geohash ─────────────────────────────────────────────
 router.get('/', auth, async (req, res) => {
@@ -152,6 +153,15 @@ router.post('/:id/claim', auth, async (req, res) => {
     await client.query('COMMIT');
 
     updateChallengeProgress(req.user.id, 'treasures_found').catch(() => {});
+    // Notificar al creador del tesoro
+    if (treasure.created_by) {
+      const tierCfg = TREASURE_TIERS[treasure.tier] || TREASURE_TIERS.chispa;
+      sendPush(treasure.created_by, {
+        title: `${tierCfg.label} encontrada 🎉`,
+        body:  `${req.user.public_name || 'Alguien'} encontró tu tesoro`,
+        data:  { type: 'treasure_found' },
+      });
+    }
 
     res.json({
       ok: true,
