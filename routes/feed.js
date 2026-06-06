@@ -26,9 +26,10 @@ router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT
-        p.id, p.text, p.upvotes, p.downvotes, p.created_at, p.geohash_zone, p.is_chaos,
+        p.id, p.text, p.upvotes, p.downvotes, p.created_at, p.geohash_zone, p.is_chaos, p.user_id AS author_id,
         u.public_name AS author_name, u.karma AS author_karma, u.avatar_url AS author_avatar,
         v.value AS my_vote,
+        (SELECT COUNT(*)::int FROM post_comments WHERE post_id = p.id) AS comments_count,
         COALESCE(
           json_agg(
             json_build_object('emoji', pr.emoji, 'count', pr.cnt, 'my_reaction', pr.mine)
@@ -48,7 +49,7 @@ router.get('/', auth, async (req, res) => {
        WHERE p.geohash_zone LIKE $2
          AND p.created_at > NOW() - INTERVAL '3 days'
          AND p.is_chaos = false
-       GROUP BY p.id, u.public_name, u.karma, u.avatar_url, v.value
+       GROUP BY p.id, u.public_name, u.karma, u.avatar_url, v.value, p.user_id
        ORDER BY p.created_at DESC
        LIMIT $3 OFFSET $4`,
       [req.user.id, `${zonePrefix}%`, safeLimit, safeOffset]
