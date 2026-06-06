@@ -54,16 +54,52 @@ router.post('/register', async (req, res) => {
       const user = await pool.query('SELECT * FROM users WHERE device_id = $1', [device_id]);
       return res.json({ user: sanitize(user.rows[0]), created: false });
     }
+    // Generar código de referido único
+    let referralCode = null;
+    for (let attempts = 0; attempts < 5; attempts++) {
+      const code = Math.random().toString(36).slice(2, 8).toUpperCase();
+      const exists = await pool.query('SELECT 1 FROM users WHERE referral_code=$1', [code]);
+      if (exists.rows.length === 0) { referralCode = code; break; }
+    }
     const result = await pool.query(
-      `INSERT INTO users (public_name, current_geohash, device_id, is_under_16)
-       VALUES ($1,$2,$3,$4) RETURNING *`,
-      [public_name.trim(), geohash, device_id, is_under_16 || false]
+      `INSERT INTO users (public_name, current_geohash, device_id, is_under_16, referral_code)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [public_name.trim(), geohash, device_id, is_under_16 || false, referralCode]
     );
     const u = result.rows[0];
     await Promise.all([
       pool.query('INSERT INTO user_coins (user_id,coins) VALUES ($1,0) ON CONFLICT DO NOTHING', [u.id]),
       pool.query('INSERT INTO user_streaks (user_id) VALUES ($1) ON CONFLICT DO NOTHING', [u.id]),
     ]);
+
+    // Aplicar código de referido si se proporcionó
+    const { referral_code: appliedCode } = req.body;
+    if (appliedCode) {
+      try {
+        const referrer = await pool.query(
+          'SELECT id FROM users WHERE referral_code = $1 AND id != $2',
+          [appliedCode.toUpperCase(), u.id]
+        );
+        if (referrer.rows.length > 0) {
+          const referrerId = referrer.rows[0].id;
+          await pool.query(
+            `INSERT INTO referrals (referrer_id, referred_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+            [referrerId, u.id]
+          );
+          // +50 monedas para ambos
+          await Promise.all([
+            pool.query(`UPDATE user_coins SET coins=coins+50 WHERE user_id=$1`, [u.id]),
+            pool.query(`UPDATE user_coins SET coins=coins+50 WHERE user_id=$1`, [referrerId]),
+            pool.query(`INSERT INTO coin_transactions (user_id,delta,reason) VALUES ($1,50,'referral_bonus')`, [u.id]),
+            pool.query(`INSERT INTO coin_transactions (user_id,delta,reason) VALUES ($1,50,'referral_reward')`, [referrerId]),
+          ]);
+          await pool.query(`UPDATE referrals SET rewarded=true WHERE referrer_id=$1 AND referred_id=$2`, [referrerId, u.id]);
+        }
+      } catch (refErr) {
+        console.error('Referral apply error:', refErr);
+      }
+    }
+
     res.status(201).json({ user: sanitize(u), created: true });
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'Device already registered' });
@@ -233,6 +269,28 @@ router.get('/:id/profile', auth, async (req, res) => {
     res.json({ user: { ...result.rows[0], badges: badges.rows.map(b => b.badge_name) } });
   } catch (err) {
     console.error('GET /user/:id/profile error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ── GET /user/referral ────────────────────────────────────────────────────────
+router.get('/referral', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT referral_code,
+              (SELECT COUNT(*) FROM referrals WHERE referrer_id=$1)::int AS total_referred,
+              (SELECT COUNT(*) FROM referrals WHERE referrer_id=$1 AND rewarded=true)::int AS rewarded_count
+       FROM users WHERE id=$1`,
+      [req.user.id]
+    );
+    const row = result.rows[0];
+    res.json({
+      code:            row.referral_code,
+      total_referred:  row.total_referred,
+      rewarded_count:  row.rewarded_count,
+      coins_earned:    row.rewarded_count * 50,
+    });
+  } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
   }
 });

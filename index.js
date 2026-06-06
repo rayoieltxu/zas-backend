@@ -21,10 +21,15 @@ const authEmailRoutes = require('./routes/auth_email');
 const reactionsRoutes = require('./routes/reactions');
 const socialRoutes    = require('./routes/social');
 const dmRoutes        = require('./routes/dms');
+const uploadRoutes    = require('./routes/upload');
+const storiesRoutes   = require('./routes/stories');
+const shopRoutes      = require('./routes/shop');
+const warsRoutes      = require('./routes/wars');
 const setupSocket     = require('./socket');
 const pool            = require('./db/pool');
 const { cleanChaosPostsIfNeeded } = require('./services/chaos');
 const { recalcWeeklyPoints }      = require('./routes/clans');
+const { finalizeWars }            = require('./routes/wars');
 
 const app    = express();
 const server = http.createServer(app);
@@ -61,6 +66,10 @@ app.use('/visitor',    visitorRoutes);
 app.use('/reactions',  reactionsRoutes);
 app.use('/social',     socialRoutes);
 app.use('/dms',        dmRoutes);
+app.use('/upload',     uploadRoutes);
+app.use('/stories',    storiesRoutes);
+app.use('/shop',       shopRoutes);
+app.use('/wars',       warsRoutes);
 app.use('/feed/:postId/comments', require('./routes/comments'));
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
@@ -73,16 +82,21 @@ setupSocket(io);
 
 setInterval(() => cleanChaosPostsIfNeeded(pool),  2 * 60 * 1000);
 setInterval(() => recalcWeeklyPoints(pool),       60 * 60 * 1000);
+setInterval(() => finalizeWars(),                 60 * 60 * 1000); // cada hora
 setInterval(async () => {
   try {
+    // Limpiar visitors expirados
     const r = await pool.query('DELETE FROM visitors WHERE expires_at <= NOW()');
     if (r.rowCount > 0) console.log(`🧹 Cleaned ${r.rowCount} expired visitors`);
-  } catch (err) { console.error('Visitor cleanup error:', err); }
+    // Limpiar stories expiradas
+    const s = await pool.query('DELETE FROM stories WHERE expires_at <= NOW()');
+    if (s.rowCount > 0) console.log(`🧹 Cleaned ${s.rowCount} expired stories`);
+  } catch (err) { console.error('Cleanup error:', err); }
 }, 60 * 60 * 1000);
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
-  console.log(`🚀 Zas backend on :${PORT} [Fase 4 activa — TODAS las fases]`);
+  console.log(`🚀 Zas backend on :${PORT} [V5 — imágenes, stories, tienda, clan wars, referidos]`);
 });
 
 module.exports = { app, server };

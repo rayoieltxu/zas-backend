@@ -9,6 +9,7 @@ const auth    = require('../middleware/auth');
 const { awardCoins, updateStreak, updateChallengeProgress } = require('../services/economy');
 const { getChaosState, noChaosDownvote } = require('../services/chaos');
 const { sendPush } = require('../services/push');
+const { awardWarPoints } = require('./wars');
 
 function heatScore(upvotes, downvotes, createdAt) {
   const hours = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60);
@@ -26,8 +27,12 @@ router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT
-        p.id, p.text, p.upvotes, p.downvotes, p.created_at, p.geohash_zone, p.is_chaos, p.user_id AS author_id,
-        u.public_name AS author_name, u.karma AS author_karma, u.avatar_url AS author_avatar,
+        p.id, p.text, p.image_url, p.is_anonymous, p.upvotes, p.downvotes,
+        p.created_at, p.geohash_zone, p.is_chaos,
+        CASE WHEN p.is_anonymous THEN NULL ELSE p.user_id END AS author_id,
+        CASE WHEN p.is_anonymous THEN 'Anónimo' ELSE u.public_name END AS author_name,
+        CASE WHEN p.is_anonymous THEN NULL ELSE u.karma END AS author_karma,
+        CASE WHEN p.is_anonymous THEN NULL ELSE u.avatar_url END AS author_avatar,
         v.value AS my_vote,
         (SELECT COUNT(*)::int FROM post_comments WHERE post_id = p.id) AS comments_count,
         COALESCE(
@@ -84,7 +89,9 @@ router.get('/chaos', auth, async (req, res) => {
   const zonePrefix = req.user.current_geohash.slice(0, 5);
   try {
     const result = await pool.query(
-      `SELECT p.id, p.text, p.upvotes, p.created_at, u.public_name AS author_name
+      `SELECT p.id, p.text, p.image_url, p.is_anonymous, p.upvotes, p.created_at,
+              CASE WHEN p.is_anonymous THEN 'Anónimo' ELSE u.public_name END AS author_name,
+              CASE WHEN p.is_anonymous THEN NULL ELSE u.avatar_url END AS author_avatar
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
        WHERE p.geohash_zone LIKE $1 AND p.is_chaos = true
@@ -99,9 +106,9 @@ router.get('/chaos', auth, async (req, res) => {
 
 // ─── POST /feed ───────────────────────────────────────────────────────────────
 router.post('/', auth, async (req, res) => {
-  const { text } = req.body;
-  if (!text?.trim()) return res.status(400).json({ error: 'text required' });
-  if (text.trim().length > 500) return res.status(400).json({ error: 'Max 500 chars' });
+  const { text, image_url, is_anonymous = false } = req.body;
+  if (!text?.trim() && !image_url) return res.status(400).json({ error: 'text or image required' });
+  if (text && text.trim().length > 500) return res.status(400).json({ error: 'Max 500 chars' });
   if (req.user.is_visitor) return res.status(403).json({ error: 'Visitantes no pueden publicar', code: 'VISITOR_RESTRICTION' });
 
   const chaos   = getChaosState();
@@ -111,15 +118,15 @@ router.post('/', auth, async (req, res) => {
   try {
     await client.query('BEGIN');
     const result = await client.query(
-      `INSERT INTO posts (user_id, text, geohash_zone, is_chaos)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [req.user.id, text.trim(), req.user.current_geohash, isChaos]
+      `INSERT INTO posts (user_id, text, image_url, is_anonymous, geohash_zone, is_chaos)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [req.user.id, text?.trim() || '', image_url || null, Boolean(is_anonymous), req.user.current_geohash, isChaos]
     );
     const post = {
       ...result.rows[0],
-      author_name:   req.user.public_name,
-      author_karma:  req.user.karma,
-      author_avatar: req.user.avatar_url || null,
+      author_name:   is_anonymous ? 'Anónimo' : req.user.public_name,
+      author_karma:  is_anonymous ? null : req.user.karma,
+      author_avatar: is_anonymous ? null : (req.user.avatar_url || null),
       my_vote: null,
     };
     await client.query('COMMIT');
@@ -137,6 +144,7 @@ router.post('/', auth, async (req, res) => {
         const earned = await awardCoins(req.user.id, 'post');
         await updateStreak(req.user.id);
         await updateChallengeProgress(req.user.id, 'posts_created');
+        awardWarPoints(req.user.id, 5).catch(() => {}); // post = 5 pts guerra
         if (earned > 0 && io?.notifyUser) {
           io.notifyUser(req.user.id, 'coins_earned', { amount: earned, reason: 'post' });
         }
@@ -218,6 +226,7 @@ router.post('/vote/:postId', auth, noChaosDownvote, async (req, res) => {
         try {
           const earned = await awardCoins(authorId, 'upvote_received');
           await updateChallengeProgress(authorId, 'upvotes_received');
+          awardWarPoints(authorId, 2).catch(() => {}); // upvote recibido = 2 pts guerra
           if (earned > 0 && req.app?.get('io')?.notifyUser) {
             req.app.get('io').notifyUser(authorId, 'coins_earned', { amount: earned, reason: 'upvote_received' });
           }
