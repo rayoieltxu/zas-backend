@@ -124,13 +124,20 @@ router.post('/', auth, async (req, res) => {
     await client.query('COMMIT');
     res.status(201).json({ post, chaos, is_visitor: false });
 
+    // Emitir post en tiempo real a todos en la zona
+    const io = req.app.get('io');
+    if (io) {
+      const zoneRoom = `zone:${req.user.current_geohash.slice(0, 5)}`;
+      io.to(zoneRoom).emit('new_post', { post: { ...post, reactions: [] } });
+    }
+
     if (!isChaos) {
       try {
         const earned = await awardCoins(req.user.id, 'post');
         await updateStreak(req.user.id);
         await updateChallengeProgress(req.user.id, 'posts_created');
-        if (earned > 0 && req.app?.get('io')?.notifyUser) {
-          req.app.get('io').notifyUser(req.user.id, 'coins_earned', { amount: earned, reason: 'post' });
+        if (earned > 0 && io?.notifyUser) {
+          io.notifyUser(req.user.id, 'coins_earned', { amount: earned, reason: 'post' });
         }
       } catch (e) { console.error('Economy post error:', e); }
     }
