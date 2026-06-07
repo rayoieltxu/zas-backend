@@ -165,71 +165,79 @@ router.get('/album', auth, async (req, res) => {
 // Exportamos la función para llamarla desde index.js
 
 async function scheduleDailyMomento(app) {
-  const today = new Date().toISOString().slice(0, 10);
-  const existing = await pool.query(
-    `SELECT 1 FROM moment_windows WHERE date=$1`, [today]
-  );
-  if (existing.rows.length > 0) {
-    console.log('📸 Momento ZAS: ya existe ventana para hoy');
-    return;
-  }
-
-  // Hora aleatoria entre 9:00 y 21:55 (hora local del servidor = UTC)
-  const now       = new Date();
-  const minHour   = 9, maxHour = 21, maxMin = 55;
-  const todayStart = new Date();
-  todayStart.setHours(minHour, 0, 0, 0);
-
-  const totalMinutes = (maxHour - minHour) * 60 + maxMin;
-  const randomMin    = Math.floor(Math.random() * totalMinutes);
-  const fireAt       = new Date(todayStart.getTime() + randomMin * 60 * 1000);
-
-  // Si ya pasó la hora, esperar al día siguiente (no debería pasar en condiciones normales)
-  if (fireAt <= now) {
-    console.log('📸 Momento ZAS: hora aleatoria ya pasó hoy, esperando mañana');
-    scheduleNextDay(app);
-    return;
-  }
-
-  const msUntilFire = fireAt.getTime() - now.getTime();
-  console.log(`📸 Momento ZAS: programado para las ${fireAt.toISOString()} (en ${Math.round(msUntilFire/60000)} min)`);
-
-  setTimeout(async () => {
-    try {
-      const startsAt  = new Date();
-      const expiresAt = new Date(startsAt.getTime() + WINDOW_MINUTES * 60 * 1000);
-      const todayDate = startsAt.toISOString().slice(0, 10);
-
-      const winRes = await pool.query(
-        `INSERT INTO moment_windows (date, started_at, expires_at, notified)
-         VALUES ($1,$2,$3,true)
-         ON CONFLICT (date) DO NOTHING RETURNING *`,
-        [todayDate, startsAt, expiresAt]
-      );
-      if (!winRes.rows.length) return; // ya existe
-
-      // Enviar push a TODOS los usuarios con token registrado
-      const tokens = await pool.query(`SELECT user_id FROM push_tokens`);
-      console.log(`📸 Momento ZAS: enviando push a ${tokens.rows.length} usuarios`);
-
-      for (const { user_id } of tokens.rows) {
-        sendPush(user_id, {
-          title: '⚡ ¡Es tu Momento ZAS!',
-          body:  '📸 Tienes 5 minutos para subir tu foto. ¡No lo dejes escapar!',
-          data:  { type: 'momento_zas', window_id: winRes.rows[0].id },
-        });
-      }
-
-      // Emitir por socket a todos los conectados
-      const io = app?.get('io');
-      if (io) io.emit('momento_zas_start', { expires_at: expiresAt, window_id: winRes.rows[0].id });
-
-      // Programar siguiente día
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const existing = await pool.query(
+      `SELECT 1 FROM moment_windows WHERE date=$1`, [today]
+    );
+    if (existing.rows.length > 0) {
+      console.log('📸 Momento ZAS: ya existe ventana para hoy');
       scheduleNextDay(app);
-    } catch (err) {
-      console.error('Momento ZAS cron error:', err);
+      return;
     }
-  }, msUntilFire);
+
+    // Hora aleatoria entre 9:00 y 21:55 (hora local del servidor = UTC)
+    const now        = new Date();
+    const minHour    = 9, maxHour = 21, maxMin = 55;
+    const todayStart = new Date();
+    todayStart.setHours(minHour, 0, 0, 0);
+
+    const totalMinutes = (maxHour - minHour) * 60 + maxMin;
+    const randomMin    = Math.floor(Math.random() * totalMinutes);
+    const fireAt       = new Date(todayStart.getTime() + randomMin * 60 * 1000);
+
+    // Si ya pasó la hora, esperar al día siguiente
+    if (fireAt <= now) {
+      console.log('📸 Momento ZAS: hora aleatoria ya pasó hoy, esperando mañana');
+      scheduleNextDay(app);
+      return;
+    }
+
+    const msUntilFire = fireAt.getTime() - now.getTime();
+    console.log(`📸 Momento ZAS: programado para las ${fireAt.toISOString()} (en ${Math.round(msUntilFire/60000)} min)`);
+
+    setTimeout(async () => {
+      try {
+        const startsAt  = new Date();
+        const expiresAt = new Date(startsAt.getTime() + WINDOW_MINUTES * 60 * 1000);
+        const todayDate = startsAt.toISOString().slice(0, 10);
+
+        const winRes = await pool.query(
+          `INSERT INTO moment_windows (date, started_at, expires_at, notified)
+           VALUES ($1,$2,$3,true)
+           ON CONFLICT (date) DO NOTHING RETURNING *`,
+          [todayDate, startsAt, expiresAt]
+        );
+        if (!winRes.rows.length) return; // ya existe
+
+        // Enviar push a TODOS los usuarios con token registrado
+        const tokens = await pool.query(`SELECT user_id FROM push_tokens`);
+        console.log(`📸 Momento ZAS: enviando push a ${tokens.rows.length} usuarios`);
+
+        for (const { user_id } of tokens.rows) {
+          sendPush(user_id, {
+            title: '⚡ ¡Es tu Momento ZAS!',
+            body:  '📸 Tienes 5 minutos para subir tu foto. ¡No lo dejes escapar!',
+            data:  { type: 'momento_zas', window_id: winRes.rows[0].id },
+          });
+        }
+
+        // Emitir por socket a todos los conectados
+        const io = app?.get('io');
+        if (io) io.emit('momento_zas_start', { expires_at: expiresAt, window_id: winRes.rows[0].id });
+
+        // Programar siguiente día
+        scheduleNextDay(app);
+      } catch (err) {
+        console.error('Momento ZAS cron error:', err);
+        scheduleNextDay(app); // no dejar de intentarlo mañana
+      }
+    }, msUntilFire);
+  } catch (err) {
+    console.error('📸 Momento ZAS: error al inicializar (¿falta la migración?):', err.message);
+    // Reintentar en 5 minutos por si la BD aún no tiene las tablas
+    setTimeout(() => scheduleDailyMomento(app), 5 * 60 * 1000);
+  }
 }
 
 function scheduleNextDay(app) {
