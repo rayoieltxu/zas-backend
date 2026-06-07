@@ -18,10 +18,10 @@ async function run() {
          ON posts (user_id, created_at DESC)`,
       // Reacciones por post
       `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_reactions_post
-         ON reactions (post_id)`,
+         ON post_reactions (post_id)`,
       // Reacciones por usuario
       `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_reactions_user
-         ON reactions (user_id, created_at DESC)`,
+         ON post_reactions (user_id, created_at DESC)`,
       // Daily claims por usuario+día
       `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_daily_claims_user_day
          ON daily_claims (user_id, day)`,
@@ -38,7 +38,7 @@ async function run() {
          ON user_achievements (user_id)`,
       // ZAS moments por usuario
       `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_zas_moments_user
-         ON zas_moments (user_id, taken_at DESC)`,
+         ON zas_moments (user_id, created_at DESC)`,
     ];
 
     for (const sql of indexes) {

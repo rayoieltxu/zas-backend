@@ -58,20 +58,24 @@ const limiter = (max, windowMs = 60_000) => rateLimit({
   handler: (_req, res) => res.status(429).json({ error: 'Demasiadas peticiones, espera un momento.' }),
 });
 
-// General: 200 req/min por IP (cubre GETs normales de la app)
-app.use(limiter(200));
+// General: 600 req/min por IP — la app hace ~10 peticiones en paralelo al arrancar
+// y en prod puede haber carrier NAT (misma IP para varios usuarios)
+app.use(limiter(600));
 
-// Solo limitamos las escrituras problemáticas (POST/PUT/DELETE)
+// Solo limitamos escrituras abusivas (POST/PUT/DELETE)
 const writeOnly = (max, windowMs = 60_000) => (req, res, next) => {
   if (req.method === 'GET') return next();
   return limiter(max, windowMs)(req, res, next);
 };
 
-app.use('/feed',      writeOnly(10));   // 10 posts/min
-app.use('/reactions', writeOnly(40));   // 40 reacciones/min
-app.use('/dopamine/daily-claim', limiter(5, 24 * 60 * 60_000)); // 5 intentos/día
-app.use('/dopamine/duel',        writeOnly(5));
-app.use('/chat',      writeOnly(30));
+// Auth nunca se limita (el usuario puede estar reintentando login)
+// app.use('/auth', ...); — sin límite adicional
+
+app.use('/feed',      writeOnly(20));   // 20 posts/min
+app.use('/reactions', writeOnly(60));   // 60 reacciones/min
+app.use('/dopamine/daily-claim', limiter(10, 24 * 60 * 60_000)); // 10 intentos/día
+app.use('/dopamine/duel',        writeOnly(10));
+app.use('/chat',      writeOnly(40));
 
 if (process.env.NODE_ENV !== 'production') {
   app.use((req, _res, next) => { console.log(`${req.method} ${req.path}`); next(); });
