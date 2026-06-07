@@ -18,7 +18,7 @@ function heatScore(upvotes, downvotes, createdAt) {
 
 // ─── GET /feed ────────────────────────────────────────────────────────────────
 router.get('/', auth, async (req, res) => {
-  const { zone, limit = 30, offset = 0 } = req.query;
+  const { zone, limit = 30, offset = 0, image_only } = req.query;
   const targetZone  = zone || req.user.current_geohash;
   const safeLimit   = Math.min(parseInt(limit)  || 30, 100);
   const safeOffset  = Math.max(parseInt(offset) || 0,  0);
@@ -69,6 +69,7 @@ router.get('/', auth, async (req, res) => {
        WHERE p.geohash_zone LIKE $2
          AND p.created_at > NOW() - INTERVAL '3 days'
          AND p.is_chaos = false
+         ${image_only === 'true' ? 'AND p.image_url IS NOT NULL' : ''}
        GROUP BY p.id, u.public_name, u.karma, u.avatar_url, v.value, p.user_id
        ORDER BY p.created_at DESC
        LIMIT $3 OFFSET $4`,

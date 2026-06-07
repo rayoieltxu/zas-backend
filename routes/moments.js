@@ -48,7 +48,7 @@ router.get('/status', auth, async (req, res) => {
 // ── POST /moments ─────────────────────────────────────────────────────────────
 // Subir la foto del momento
 router.post('/', auth, async (req, res) => {
-  const { image_url, caption, window_id } = req.body;
+  const { image_url, caption, window_id, location_name } = req.body;
   if (!image_url) return res.status(400).json({ error: 'image_url requerido' });
 
   try {
@@ -68,11 +68,11 @@ router.post('/', auth, async (req, res) => {
     const feedUntil = new Date(Date.now() + FEED_HOURS * 3600 * 1000);
 
     const result = await pool.query(
-      `INSERT INTO zas_moments (user_id, window_id, image_url, caption, zone, feed_until)
-       VALUES ($1,$2,$3,$4,$5,$6)
+      `INSERT INTO zas_moments (user_id, window_id, image_url, caption, zone, feed_until, location_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (user_id, window_id) DO NOTHING
        RETURNING *`,
-      [req.user.id, win.id, image_url, caption?.trim() || null, zone, feedUntil]
+      [req.user.id, win.id, image_url, caption?.trim() || null, zone, feedUntil, location_name?.trim() || null]
     );
     if (!result.rows.length)
       return res.status(409).json({ error: 'Ya subiste tu momento hoy' });
@@ -115,7 +115,7 @@ router.get('/feed', auth, async (req, res) => {
   const zone = req.query.zone || req.user.current_geohash;
   try {
     const result = await pool.query(
-      `SELECT zm.id, zm.image_url, zm.caption, zm.created_at, zm.feed_until,
+      `SELECT zm.id, zm.image_url, zm.caption, zm.location_name, zm.created_at, zm.feed_until,
               u.public_name AS author_name, u.avatar_url AS author_avatar,
               us.momento_streak,
               (zm.user_id = $1) AS is_mine
@@ -140,7 +140,7 @@ router.get('/album', auth, async (req, res) => {
   const userId = req.query.userId || req.user.id;
   try {
     const result = await pool.query(
-      `SELECT zm.id, zm.image_url, zm.caption, zm.created_at, zm.zone,
+      `SELECT zm.id, zm.image_url, zm.caption, zm.location_name, zm.created_at, zm.zone,
               mw.started_at AS moment_time
        FROM zas_moments zm
        JOIN moment_windows mw ON mw.id = zm.window_id
