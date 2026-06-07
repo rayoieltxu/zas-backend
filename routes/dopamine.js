@@ -7,7 +7,7 @@ const router  = express.Router();
 const { Pool } = require('pg');
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 const { auth } = require('../middleware/auth');
-const { sendPushToUser } = require('../utils/push');
+const { sendPush } = require('../services/push');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function karmaToLevel(karma) {
@@ -37,7 +37,7 @@ function dailyReward(streak) {
 }
 
 // Unlock achievement helper
-async function unlockAchievement(client, userId, key, pushToken) {
+async function unlockAchievement(client, userId, key) {
   try {
     const { rowCount } = await client.query(
       `INSERT INTO user_achievements (user_id, achievement) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
@@ -46,12 +46,8 @@ async function unlockAchievement(client, userId, key, pushToken) {
     if (rowCount > 0) {
       const { rows } = await client.query(`SELECT * FROM achievements WHERE key=$1`, [key]);
       if (rows[0]) {
-        // Dar monedas del logro
         await client.query(`UPDATE users SET coins = coins + $1 WHERE id = $2`, [rows[0].coins, userId]);
-        // Push notification
-        if (pushToken) {
-          sendPushToUser(pushToken, '🏆 ¡Logro desbloqueado!', `${rows[0].icon} ${rows[0].name} — +${rows[0].coins} 🪙`);
-        }
+        sendPush(userId, { title: '🏆 ¡Logro desbloqueado!', body: `${rows[0].icon} ${rows[0].name} — +${rows[0].coins} 🪙` });
         return rows[0];
       }
     }
@@ -138,19 +134,17 @@ router.post('/daily-claim', auth, async (req, res) => {
     }
 
     // Logros de racha
-    const { rows: userRows } = await client.query(`SELECT push_token FROM users WHERE id=$1`, [req.user.id]);
-    const pushToken = userRows[0]?.push_token;
-    if (loginStreak >= 3)  await unlockAchievement(client, req.user.id, 'streak_3',  pushToken);
-    if (loginStreak >= 7)  await unlockAchievement(client, req.user.id, 'streak_7',  pushToken);
-    if (loginStreak >= 30) await unlockAchievement(client, req.user.id, 'streak_30', pushToken);
-    if (multiplier >= 2)   await unlockAchievement(client, req.user.id, 'combo_x2',  pushToken);
+    if (loginStreak >= 3)  await unlockAchievement(client, req.user.id, 'streak_3');
+    if (loginStreak >= 7)  await unlockAchievement(client, req.user.id, 'streak_7');
+    if (loginStreak >= 30) await unlockAchievement(client, req.user.id, 'streak_30');
+    if (multiplier >= 2)   await unlockAchievement(client, req.user.id, 'combo_x2');
 
     // Logro de 7 días de sobre
     const claimCount = await client.query(
       `SELECT COUNT(*) FROM daily_claims WHERE user_id=$1`, [req.user.id]
     );
     if (parseInt(claimCount.rows[0].count) >= 7) {
-      await unlockAchievement(client, req.user.id, 'daily_7', pushToken);
+      await unlockAchievement(client, req.user.id, 'daily_7');
     }
 
     await client.query('COMMIT');
@@ -245,36 +239,35 @@ router.get('/unread-achievements', auth, async (req, res) => {
 async function checkAchievements(userId, trigger) {
   const client = await pool.connect();
   try {
-    const { rows: userRows } = await client.query(`SELECT push_token, karma FROM users WHERE id=$1`, [userId]);
+    const { rows: userRows } = await client.query(`SELECT karma FROM users WHERE id=$1`, [userId]);
     const user = userRows[0];
     if (!user) return;
 
     if (trigger === 'post') {
       const { rows } = await client.query(`SELECT COUNT(*) FROM posts WHERE user_id=$1`, [userId]);
-      if (parseInt(rows[0].count) === 1) await unlockAchievement(client, userId, 'first_post', user.push_token);
-      // early bird / night owl
+      if (parseInt(rows[0].count) === 1) await unlockAchievement(client, userId, 'first_post');
       const hour = new Date().getHours();
-      if (hour < 8)  await unlockAchievement(client, userId, 'early_bird', user.push_token);
-      if (hour >= 0 && hour < 4) await unlockAchievement(client, userId, 'night_owl', user.push_token);
+      if (hour < 8)  await unlockAchievement(client, userId, 'early_bird');
+      if (hour >= 0 && hour < 4) await unlockAchievement(client, userId, 'night_owl');
     }
     if (trigger === 'reaction') {
       const { rows } = await client.query(`SELECT COUNT(*) FROM reactions WHERE user_id=$1`, [userId]);
-      if (parseInt(rows[0].count) === 1) await unlockAchievement(client, userId, 'first_reaction', user.push_token);
+      if (parseInt(rows[0].count) === 1) await unlockAchievement(client, userId, 'first_reaction');
     }
     if (trigger === 'momento') {
       const { rows } = await client.query(`SELECT COUNT(*) FROM zas_moments WHERE user_id=$1`, [userId]);
       const count = parseInt(rows[0].count);
-      if (count === 1) await unlockAchievement(client, userId, 'first_momento', user.push_token);
-      if (count >= 7) await unlockAchievement(client, userId, 'momento_7', user.push_token);
+      if (count === 1) await unlockAchievement(client, userId, 'first_momento');
+      if (count >= 7) await unlockAchievement(client, userId, 'momento_7');
     }
     if (trigger === 'karma') {
-      if (user.karma >= 100) await unlockAchievement(client, userId, 'secret_100karma', user.push_token);
+      if (user.karma >= 100) await unlockAchievement(client, userId, 'secret_100karma');
     }
-    if (trigger === 'top1')  await unlockAchievement(client, userId, 'top1', user.push_token);
-    if (trigger === 'top3')  await unlockAchievement(client, userId, 'top3', user.push_token);
-    if (trigger === 'clan')  await unlockAchievement(client, userId, 'clan_member', user.push_token);
-    if (trigger === 'visitor') await unlockAchievement(client, userId, 'secret_first_zone', user.push_token);
-    if (trigger === 'treasure') await unlockAchievement(client, userId, 'treasure_first', user.push_token);
+    if (trigger === 'top1')     await unlockAchievement(client, userId, 'top1');
+    if (trigger === 'top3')     await unlockAchievement(client, userId, 'top3');
+    if (trigger === 'clan')     await unlockAchievement(client, userId, 'clan_member');
+    if (trigger === 'visitor')  await unlockAchievement(client, userId, 'secret_first_zone');
+    if (trigger === 'treasure') await unlockAchievement(client, userId, 'treasure_first');
   } finally {
     client.release();
   }
@@ -329,7 +322,7 @@ router.post('/duel', auth, async (req, res) => {
 
     // Crear duelo
     const { rows: myKarma }  = await client.query(`SELECT karma FROM users WHERE id=$1`, [req.user.id]);
-    const { rows: oppRows }  = await client.query(`SELECT karma, push_token, public_name FROM users WHERE id=$1`, [challenged_id]);
+    const { rows: oppRows }  = await client.query(`SELECT karma, public_name FROM users WHERE id=$1`, [challenged_id]);
 
     const { rows } = await client.query(
       `INSERT INTO duels (challenger_id, challenged_id, stake_coins, challenger_karma_start, challenged_karma_start)
@@ -340,13 +333,10 @@ router.post('/duel', auth, async (req, res) => {
     await client.query('COMMIT');
 
     // Push al retado
-    if (oppRows[0]?.push_token) {
-      sendPushToUser(oppRows[0].push_token, '⚔️ ¡Te han retado!',
-        `${myRows[0].public_name} te desafía a un duelo de karma. Apuesta: ${stake_coins} 🪙`);
-    }
+    sendPush(challenged_id, { title: '⚔️ ¡Te han retado!', body: `${myRows[0].public_name} te desafía a un duelo de karma. Apuesta: ${stake_coins} 🪙` });
 
     // Logro primer duelo retador
-    await unlockAchievement(client, req.user.id, 'first_duel', myRows[0].push_token);
+    await unlockAchievement(client, req.user.id, 'first_duel');
 
     res.json({ ok: true, duel_id: rows[0].id });
   } catch (err) {
@@ -386,14 +376,10 @@ router.put('/duel/:id/accept', auth, async (req, res) => {
     await client.query('COMMIT');
 
     // Push al retador
-    const { rows: chRows } = await client.query(`SELECT push_token, public_name FROM users WHERE id=$1`, [duel.challenger_id]);
     const { rows: myNameRows } = await client.query(`SELECT public_name FROM users WHERE id=$1`, [req.user.id]);
-    if (chRows[0]?.push_token) {
-      sendPushToUser(chRows[0].push_token, '⚔️ ¡Duelo aceptado!',
-        `${myNameRows[0]?.public_name} aceptó tu reto. Tienes 24h para ganar más karma. ¡A por ello!`);
-    }
+    sendPush(duel.challenger_id, { title: '⚔️ ¡Duelo aceptado!', body: `${myNameRows[0]?.public_name} aceptó tu reto. Tienes 24h para ganar más karma. ¡A por ello!` });
 
-    await unlockAchievement(client, req.user.id, 'first_duel', myRows[0].push_token);
+    await unlockAchievement(client, req.user.id, 'first_duel');
 
     res.json({ ok: true, ends_at: ends });
   } catch (err) {
@@ -472,8 +458,6 @@ async function resolveDuel(duelId) {
     const winnerId   = chGain >= cdGain ? duel.challenger_id : duel.challenged_id;
     const loserId    = winnerId === duel.challenger_id ? duel.challenged_id : duel.challenger_id;
     const winnerName = winnerId === duel.challenger_id ? ch[0].public_name : cd[0].public_name;
-    const winnerPush = winnerId === duel.challenger_id ? ch[0].push_token : cd[0].push_token;
-    const loserPush  = loserId  === duel.challenger_id ? ch[0].push_token : cd[0].push_token;
 
     const prize = duel.stake_coins * 2;
     await client.query('BEGIN');
@@ -483,14 +467,13 @@ async function resolveDuel(duelId) {
     await client.query('COMMIT');
 
     // Push
-    if (winnerPush) sendPushToUser(winnerPush, '⚔️ ¡Ganaste el duelo!', `Has ganado ${prize} 🪙. ¡Campeón!`);
-    if (loserPush)  sendPushToUser(loserPush, '⚔️ Duelo terminado', `${winnerName} ganó esta vez. ¡Révatele!`);
+    sendPush(winnerId, { title: '⚔️ ¡Ganaste el duelo!', body: `Has ganado ${prize} 🪙. ¡Campeón!` });
+    sendPush(loserId,  { title: '⚔️ Duelo terminado',    body: `${winnerName} ganó esta vez. ¡Révatele!` });
 
     // Logros
-    await unlockAchievement(client, winnerId, 'duel_win', winnerPush);
-    // Contar victorias
+    await unlockAchievement(client, winnerId, 'duel_win');
     const { rows: wins } = await client.query(`SELECT COUNT(*) FROM duels WHERE winner_id=$1`, [winnerId]);
-    if (parseInt(wins[0].count) >= 5) await unlockAchievement(client, winnerId, 'duel_win_5', winnerPush);
+    if (parseInt(wins[0].count) >= 5) await unlockAchievement(client, winnerId, 'duel_win_5');
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('resolveDuel error:', err.message);
