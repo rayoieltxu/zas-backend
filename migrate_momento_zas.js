@@ -25,7 +25,7 @@ async function run() {
     await client.query(`
       CREATE TABLE IF NOT EXISTS zas_moments (
         id          SERIAL PRIMARY KEY,
-        user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         window_id   INTEGER NOT NULL REFERENCES moment_windows(id),
         image_url   TEXT NOT NULL,
         caption     TEXT,
