@@ -6,7 +6,7 @@ const express = require('express');
 const router  = express.Router();
 const { Pool } = require('pg');
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-const { auth } = require('../middleware/auth');
+const auth = require('../middleware/auth');
 const { sendPush } = require('../services/push');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
