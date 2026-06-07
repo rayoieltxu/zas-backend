@@ -25,11 +25,13 @@ const uploadRoutes    = require('./routes/upload');
 const storiesRoutes   = require('./routes/stories');
 const shopRoutes      = require('./routes/shop');
 const warsRoutes      = require('./routes/wars');
+const momentsRoutes   = require('./routes/moments');
 const setupSocket     = require('./socket');
 const pool            = require('./db/pool');
 const { cleanChaosPostsIfNeeded } = require('./services/chaos');
 const { recalcWeeklyPoints }      = require('./routes/clans');
 const { finalizeWars }            = require('./routes/wars');
+const { scheduleDailyMomento }    = require('./routes/moments');
 
 const app    = express();
 const server = http.createServer(app);
@@ -70,6 +72,7 @@ app.use('/upload',     uploadRoutes);
 app.use('/stories',    storiesRoutes);
 app.use('/shop',       shopRoutes);
 app.use('/wars',       warsRoutes);
+app.use('/moments',    momentsRoutes);
 app.use('/feed/:postId/comments', require('./routes/comments'));
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
@@ -83,6 +86,7 @@ setupSocket(io);
 setInterval(() => cleanChaosPostsIfNeeded(pool),  2 * 60 * 1000);
 setInterval(() => recalcWeeklyPoints(pool),       60 * 60 * 1000);
 setInterval(() => finalizeWars(),                 60 * 60 * 1000); // cada hora
+scheduleDailyMomento(app); // Momento ZAS diario a hora aleatoria
 setInterval(async () => {
   try {
     // Limpiar visitors expirados
