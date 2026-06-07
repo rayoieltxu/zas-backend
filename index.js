@@ -58,15 +58,20 @@ const limiter = (max, windowMs = 60_000) => rateLimit({
   handler: (_req, res) => res.status(429).json({ error: 'Demasiadas peticiones, espera un momento.' }),
 });
 
-// General: 120 req/min por IP
-app.use(limiter(120));
+// General: 200 req/min por IP (cubre GETs normales de la app)
+app.use(limiter(200));
 
-// Endpoints con límites más estrictos
-app.use('/feed',      limiter(30));   // 30 posts/min
-app.use('/reactions', limiter(60));   // 60 reacciones/min
+// Solo limitamos las escrituras problemáticas (POST/PUT/DELETE)
+const writeOnly = (max, windowMs = 60_000) => (req, res, next) => {
+  if (req.method === 'GET') return next();
+  return limiter(max, windowMs)(req, res, next);
+};
+
+app.use('/feed',      writeOnly(10));   // 10 posts/min
+app.use('/reactions', writeOnly(40));   // 40 reacciones/min
 app.use('/dopamine/daily-claim', limiter(5, 24 * 60 * 60_000)); // 5 intentos/día
-app.use('/dopamine/duel',        limiter(10));
-app.use('/chat',      limiter(60));
+app.use('/dopamine/duel',        writeOnly(5));
+app.use('/chat',      writeOnly(30));
 
 if (process.env.NODE_ENV !== 'production') {
   app.use((req, _res, next) => { console.log(`${req.method} ${req.path}`); next(); });
