@@ -1,9 +1,10 @@
 require('dotenv').config();
-const express = require('express');
-const http    = require('http');
+const express   = require('express');
+const http      = require('http');
 const { Server } = require('socket.io');
-const cors    = require('cors');
-const helmet  = require('helmet');
+const cors      = require('cors');
+const helmet    = require('helmet');
+const rateLimit = require('express-rate-limit');
 
 const userRoutes      = require('./routes/users');
 const feedRoutes      = require('./routes/feed');
@@ -29,11 +30,12 @@ const momentsRoutes   = require('./routes/moments');
 const dopamineRoutes  = require('./routes/dopamine');
 const setupSocket     = require('./socket');
 const pool            = require('./db/pool');
-const { cleanChaosPostsIfNeeded } = require('./services/chaos');
-const { recalcWeeklyPoints }      = require('./routes/clans');
-const { finalizeWars }            = require('./routes/wars');
-const { scheduleDailyMomento }    = require('./routes/moments');
-const { scheduleDuelResolution }  = require('./routes/dopamine');
+const { cleanChaosPostsIfNeeded }              = require('./services/chaos');
+const { recalcWeeklyPoints }                   = require('./routes/clans');
+const { finalizeWars }                         = require('./routes/wars');
+const { scheduleDailyMomento }                 = require('./routes/moments');
+const { scheduleDuelResolution }               = require('./routes/dopamine');
+const { checkZonaEnLlamas, applyKarmaDecay, getZoneMayor } = require('./services/zone');
 
 const app    = express();
 const server = http.createServer(app);
@@ -47,11 +49,38 @@ app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 app.use(express.json({ limit: '10mb' }));
 
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+const limiter = (max, windowMs = 60_000) => rateLimit({
+  windowMs,
+  max,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => res.status(429).json({ error: 'Demasiadas peticiones, espera un momento.' }),
+});
+
+// General: 120 req/min por IP
+app.use(limiter(120));
+
+// Endpoints con límites más estrictos
+app.use('/feed',      limiter(30));   // 30 posts/min
+app.use('/reactions', limiter(60));   // 60 reacciones/min
+app.use('/dopamine/daily-claim', limiter(5, 24 * 60 * 60_000)); // 5 intentos/día
+app.use('/dopamine/duel',        limiter(10));
+app.use('/chat',      limiter(60));
+
 if (process.env.NODE_ENV !== 'production') {
   app.use((req, _res, next) => { console.log(`${req.method} ${req.path}`); next(); });
 }
 
 app.get('/health', (_req, res) => res.json({ ok: true, time: new Date() }));
+
+// ── Alcalde de zona ───────────────────────────────────────────────────────────
+app.get('/zone/mayor', async (req, res) => {
+  const zone = (req.query.zone || '').slice(0, 4);
+  if (!zone) return res.status(400).json({ error: 'zone requerido' });
+  const mayor = await getZoneMayor(zone);
+  res.json({ mayor });
+});
 
 app.use('/auth',       authEmailRoutes);
 app.use('/user',       userRoutes);
@@ -91,6 +120,9 @@ setInterval(() => recalcWeeklyPoints(pool),       60 * 60 * 1000);
 setInterval(() => finalizeWars(),                 60 * 60 * 1000); // cada hora
 scheduleDailyMomento(app);    // Momento ZAS diario a hora aleatoria
 scheduleDuelResolution(app);  // Resolver duelos expirados cada hora
+setInterval(checkZonaEnLlamas, 5 * 60_000);  // Zona en llamas cada 5 min
+// Karma decay: una vez a la semana (cada 7 días)
+setInterval(applyKarmaDecay, 7 * 24 * 60 * 60_000);
 setInterval(async () => {
   try {
     // Limpiar visitors expirados
