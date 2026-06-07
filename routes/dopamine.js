@@ -11,17 +11,22 @@ const { sendPush } = require('../services/push');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function karmaToLevel(karma) {
-  // Cada nivel requiere más karma: nivel N requiere N*N*10 karma acumulado
+  // level N se alcanza con (N-1)^2 * 10 karma acumulado
   let level = 1;
   while (karma >= level * level * 10) level++;
-  return level - 1 || 1;
+  return level; // level es el primer nivel NO alcanzado aún → usuario está en level
 }
 
 function levelProgress(karma) {
-  const level    = karmaToLevel(karma);
-  const current  = (level - 1) * (level - 1) * 10;
-  const next     = level * level * 10;
-  return { level, current: karma - current, needed: next - current, pct: Math.min(1, (karma - current) / (next - current)) };
+  const level        = karmaToLevel(karma);
+  const prevThresh   = (level - 1) * (level - 1) * 10; // karma mínimo para estar en este nivel
+  const nextThresh   = level * level * 10;              // karma para subir al siguiente
+  return {
+    level,
+    current: karma - prevThresh,
+    needed:  nextThresh - prevThresh,
+    pct:     Math.min(1, (karma - prevThresh) / (nextThresh - prevThresh)),
+  };
 }
 
 // Premios del sobre diario según racha
@@ -46,7 +51,11 @@ async function unlockAchievement(client, userId, key) {
     if (rowCount > 0) {
       const { rows } = await client.query(`SELECT * FROM achievements WHERE key=$1`, [key]);
       if (rows[0]) {
-        await client.query(`UPDATE users SET coins = coins + $1 WHERE id = $2`, [rows[0].coins, userId]);
+        await client.query(
+          `INSERT INTO user_coins (user_id, coins) VALUES ($1, $2)
+           ON CONFLICT (user_id) DO UPDATE SET coins = user_coins.coins + EXCLUDED.coins`,
+          [userId, rows[0].coins]
+        );
         sendPush(userId, { title: '🏆 ¡Logro desbloqueado!', body: `${rows[0].icon} ${rows[0].name} — +${rows[0].coins} 🪙` });
         return rows[0];
       }
@@ -106,7 +115,11 @@ router.post('/daily-claim', auth, async (req, res) => {
     );
 
     // Dar monedas
-    await client.query(`UPDATE users SET coins = coins + $1 WHERE id = $2`, [reward.coins, req.user.id]);
+    await client.query(
+      `INSERT INTO user_coins (user_id, coins) VALUES ($1, $2)
+       ON CONFLICT (user_id) DO UPDATE SET coins = user_coins.coins + EXCLUDED.coins`,
+      [req.user.id, reward.coins]
+    );
 
     // Actualizar racha de login
     await client.query(
@@ -149,7 +162,7 @@ router.post('/daily-claim', auth, async (req, res) => {
 
     await client.query('COMMIT');
 
-    const { rows: updated } = await pool.query(`SELECT coins FROM users WHERE id=$1`, [req.user.id]);
+    const { rows: updated } = await pool.query(`SELECT COALESCE(coins,0) as coins FROM user_coins WHERE user_id=$1`, [req.user.id]);
     res.json({
       ok: true,
       coins_earned:  reward.coins,
@@ -280,11 +293,11 @@ router.get('/zona-en-llamas', auth, async (req, res) => {
     if (!zone) return res.json({ active: false });
     // Actividad en la zona en la última hora
     const { rows } = await pool.query(
-      `SELECT COUNT(*) FROM posts WHERE zone=$1 AND created_at > NOW() - INTERVAL '1 hour'`,
-      [zone]
+      `SELECT COUNT(*) FROM posts WHERE LEFT(geohash_zone, 4) = $1 AND created_at > NOW() - INTERVAL '1 hour'`,
+      [zone.slice(0, 4)]
     );
     const count = parseInt(rows[0].count);
-    const active = count >= 10; // umbral: 10 posts en 1h
+    const active = count >= 5; // umbral: 5 posts en 1h (ajustado para zonas pequeñas)
     res.json({ active, post_count: count, threshold: 10 });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -302,8 +315,10 @@ router.post('/duel', auth, async (req, res) => {
     if (challenged_id === req.user.id) return res.status(400).json({ error: 'No puedes retarte a ti mismo' });
 
     // Verificar monedas
-    const { rows: myRows } = await client.query(`SELECT coins, karma, push_token, public_name FROM users WHERE id=$1`, [req.user.id]);
-    if (!myRows[0] || myRows[0].coins < stake_coins) {
+    const { rows: myRows }    = await client.query(`SELECT karma, public_name FROM users WHERE id=$1`, [req.user.id]);
+    const { rows: myCoinsRow } = await client.query(`SELECT COALESCE(coins,0) as coins FROM user_coins WHERE user_id=$1`, [req.user.id]);
+    const myCoins = myCoinsRow[0]?.coins ?? 0;
+    if (!myRows[0] || myCoins < stake_coins) {
       return res.status(400).json({ error: `Necesitas ${stake_coins} 🪙 para retar` });
     }
 
@@ -318,7 +333,7 @@ router.post('/duel', auth, async (req, res) => {
     await client.query('BEGIN');
 
     // Reservar monedas del retador
-    await client.query(`UPDATE users SET coins = coins - $1 WHERE id = $2`, [stake_coins, req.user.id]);
+    await client.query(`UPDATE user_coins SET coins = coins - $1 WHERE user_id = $2`, [stake_coins, req.user.id]);
 
     // Crear duelo
     const { rows: myKarma }  = await client.query(`SELECT karma FROM users WHERE id=$1`, [req.user.id]);
@@ -358,13 +373,13 @@ router.put('/duel/:id/accept', auth, async (req, res) => {
     if (duel.status !== 'pending') return res.status(400).json({ error: 'Duelo ya no está pendiente' });
 
     // Reservar monedas del retado
-    const { rows: myRows } = await client.query(`SELECT coins, push_token FROM users WHERE id=$1`, [req.user.id]);
-    if (myRows[0].coins < duel.stake_coins) {
+    const { rows: myCoinsRow } = await client.query(`SELECT COALESCE(coins,0) as coins FROM user_coins WHERE user_id=$1`, [req.user.id]);
+    if ((myCoinsRow[0]?.coins ?? 0) < duel.stake_coins) {
       return res.status(400).json({ error: `Necesitas ${duel.stake_coins} 🪙 para aceptar` });
     }
 
     await client.query('BEGIN');
-    await client.query(`UPDATE users SET coins = coins - $1 WHERE id=$2`, [duel.stake_coins, req.user.id]);
+    await client.query(`UPDATE user_coins SET coins = coins - $1 WHERE user_id=$2`, [duel.stake_coins, req.user.id]);
 
     const now = new Date();
     const ends = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24h
@@ -402,7 +417,11 @@ router.put('/duel/:id/reject', auth, async (req, res) => {
     await client.query('BEGIN');
     await client.query(`UPDATE duels SET status='rejected' WHERE id=$1`, [duel.id]);
     // Devolver monedas al retador
-    await client.query(`UPDATE users SET coins = coins + $1 WHERE id=$2`, [duel.stake_coins, duel.challenger_id]);
+    await client.query(
+      `INSERT INTO user_coins (user_id, coins) VALUES ($1, $2)
+       ON CONFLICT (user_id) DO UPDATE SET coins = user_coins.coins + EXCLUDED.coins`,
+      [duel.challenger_id, duel.stake_coins]
+    );
     await client.query('COMMIT');
 
     res.json({ ok: true });
@@ -449,8 +468,8 @@ async function resolveDuel(duelId) {
     const duel = rows[0];
     if (!duel) return;
 
-    const { rows: ch } = await client.query(`SELECT karma, push_token, public_name FROM users WHERE id=$1`, [duel.challenger_id]);
-    const { rows: cd } = await client.query(`SELECT karma, push_token, public_name FROM users WHERE id=$1`, [duel.challenged_id]);
+    const { rows: ch } = await client.query(`SELECT karma, public_name FROM users WHERE id=$1`, [duel.challenger_id]);
+    const { rows: cd } = await client.query(`SELECT karma, public_name FROM users WHERE id=$1`, [duel.challenged_id]);
 
     const chGain = (ch[0]?.karma || 0) - duel.challenger_karma_start;
     const cdGain = (cd[0]?.karma || 0) - duel.challenged_karma_start;
@@ -463,7 +482,11 @@ async function resolveDuel(duelId) {
     await client.query('BEGIN');
     await client.query(`UPDATE duels SET status='completed', winner_id=$1, challenger_karma_end=$2, challenged_karma_end=$3 WHERE id=$4`,
       [winnerId, ch[0]?.karma, cd[0]?.karma, duelId]);
-    await client.query(`UPDATE users SET coins = coins + $1 WHERE id=$2`, [prize, winnerId]);
+    await client.query(
+      `INSERT INTO user_coins (user_id, coins) VALUES ($1, $2)
+       ON CONFLICT (user_id) DO UPDATE SET coins = user_coins.coins + EXCLUDED.coins`,
+      [winnerId, prize]
+    );
     await client.query('COMMIT');
 
     // Push
