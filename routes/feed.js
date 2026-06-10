@@ -282,3 +282,8 @@ router.delete('/:postId', auth, async (req, res) => {
 });
 
 module.exports = router;
+s(500).json({ error: 'Internal server error' });
+  }
+});
+
+module.exports = router;
