@@ -1,8 +1,16 @@
-const express = require('express');
-const router  = express.Router();
-const pool    = require('../db/pool');
-const auth    = require('../middleware/auth');
+const express    = require('express');
+const router     = express.Router();
+const pool       = require('../db/pool');
+const auth       = require('../middleware/auth');
 const { spendCoins, getCoins, COSTS } = require('../services/economy');
+
+// Cloudinary inicializado una sola vez al arrancar el módulo
+const cloudinary = require('cloudinary').v2;
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key:    process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 // ── POST /user/daily-bonus ────────────────────────────────────────────────────
 router.post('/daily-bonus', auth, async (req, res) => {
@@ -216,12 +224,6 @@ router.post('/avatar', auth, async (req, res) => {
   const { image_base64 } = req.body;
   if (!image_base64) return res.status(400).json({ error: 'image_base64 requerido' });
   try {
-    const cloudinary = require('cloudinary').v2;
-    cloudinary.config({
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      api_key:    process.env.CLOUDINARY_API_KEY,
-      api_secret: process.env.CLOUDINARY_API_SECRET,
-    });
     const result = await cloudinary.uploader.upload(image_base64, {
       folder:         'zas_avatars',
       public_id:      `avatar_${req.user.id}`,

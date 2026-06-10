@@ -47,7 +47,12 @@ const io = new Server(server, {
 app.set('io', io);
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
-app.use(express.json({ limit: '10mb' }));
+// Límite general pequeño; rutas de media tienen su propio middleware
+app.use((req, res, next) => {
+  const mediaPaths = ['/upload', '/user/avatar', '/stories', '/moments'];
+  const isMedia = mediaPaths.some(p => req.path.startsWith(p));
+  express.json({ limit: isMedia ? '10mb' : '50kb' })(req, res, next);
+});
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
 const limiter = (max, windowMs = 60_000) => rateLimit({
