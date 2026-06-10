@@ -49,9 +49,10 @@ app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 // Límite general pequeño; rutas de media tienen su propio middleware
 app.use((req, res, next) => {
-  const mediaPaths = ['/upload', '/user/avatar', '/stories', '/moments'];
-  const isMedia = mediaPaths.some(p => req.path.startsWith(p));
-  express.json({ limit: isMedia ? '10mb' : '50kb' })(req, res, next);
+  const isVideo = req.path.startsWith('/upload/video');
+  const isMedia = ['/upload', '/user/avatar', '/stories', '/moments'].some(p => req.path.startsWith(p));
+  const limit   = isVideo ? '50mb' : isMedia ? '10mb' : '50kb';
+  express.json({ limit })(req, res, next);
 });
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────

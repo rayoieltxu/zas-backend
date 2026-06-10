@@ -18,7 +18,7 @@ function heatScore(upvotes, downvotes, createdAt) {
 
 // ─── GET /feed ────────────────────────────────────────────────────────────────
 router.get('/', auth, async (req, res) => {
-  const { zone, limit = 30, offset = 0, image_only } = req.query;
+  const { zone, limit = 30, offset = 0, image_only, video_only } = req.query;
   const targetZone  = zone || req.user.current_geohash;
   const safeLimit   = Math.min(parseInt(limit)  || 30, 100);
   const safeOffset  = Math.max(parseInt(offset) || 0,  0);
@@ -27,7 +27,7 @@ router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT
-        p.id, p.text, p.image_url, p.is_anonymous, p.upvotes, p.downvotes,
+        p.id, p.text, p.image_url, p.video_url, p.video_thumbnail, p.is_anonymous, p.upvotes, p.downvotes,
         p.created_at, p.geohash_zone, p.is_chaos,
         CASE WHEN p.is_anonymous THEN NULL ELSE p.user_id END AS author_id,
         CASE WHEN p.is_anonymous THEN 'Anónimo' ELSE u.public_name END AS author_name,
@@ -70,6 +70,7 @@ router.get('/', auth, async (req, res) => {
          AND p.created_at > NOW() - INTERVAL '3 days'
          AND p.is_chaos = false
          ${image_only === 'true' ? 'AND p.image_url IS NOT NULL' : ''}
+         ${video_only === 'true' ? 'AND p.video_url IS NOT NULL' : ''}
        GROUP BY p.id, u.public_name, u.karma, u.avatar_url, v.value, p.user_id
        ORDER BY p.created_at DESC
        LIMIT $3 OFFSET $4`,
@@ -122,8 +123,8 @@ router.get('/chaos', auth, async (req, res) => {
 
 // ─── POST /feed ───────────────────────────────────────────────────────────────
 router.post('/', auth, async (req, res) => {
-  const { text, image_url, is_anonymous = false } = req.body;
-  if (!text?.trim() && !image_url) return res.status(400).json({ error: 'text or image required' });
+  const { text, image_url, video_url, video_thumbnail, is_anonymous = false } = req.body;
+  if (!text?.trim() && !image_url && !video_url) return res.status(400).json({ error: 'text, image o video requerido' });
   if (text && text.trim().length > 500) return res.status(400).json({ error: 'Max 500 chars' });
   if (req.user.is_visitor) return res.status(403).json({ error: 'Visitantes no pueden publicar', code: 'VISITOR_RESTRICTION' });
 
@@ -134,9 +135,10 @@ router.post('/', auth, async (req, res) => {
   try {
     await client.query('BEGIN');
     const result = await client.query(
-      `INSERT INTO posts (user_id, text, image_url, is_anonymous, geohash_zone, is_chaos)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [req.user.id, text?.trim() || '', image_url || null, Boolean(is_anonymous), req.user.current_geohash, isChaos]
+      `INSERT INTO posts (user_id, text, image_url, video_url, video_thumbnail, is_anonymous, geohash_zone, is_chaos)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [req.user.id, text?.trim() || '', image_url || null, video_url || null, video_thumbnail || null,
+       Boolean(is_anonymous), req.user.current_geohash, isChaos]
     );
     const post = {
       ...result.rows[0],
@@ -278,11 +280,6 @@ router.delete('/:postId', auth, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-module.exports = router;
-s(500).json({ error: 'Internal server error' });
   }
 });
 
