@@ -48,10 +48,11 @@ app.set('io', io);
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 // Límite general pequeño; rutas de media tienen su propio middleware
+// /upload/video usa multer (multipart) → no necesita express.json
 app.use((req, res, next) => {
-  const isVideo = req.path.startsWith('/upload/video');
+  if (req.path.startsWith('/upload/video')) return next(); // multer lo maneja
   const isMedia = ['/upload', '/user/avatar', '/stories', '/moments'].some(p => req.path.startsWith(p));
-  const limit   = isVideo ? '50mb' : isMedia ? '10mb' : '50kb';
+  const limit   = isMedia ? '10mb' : '50kb';
   express.json({ limit })(req, res, next);
 });
 
