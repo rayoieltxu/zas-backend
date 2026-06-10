@@ -253,8 +253,3 @@ function scheduleNextDay(app) {
 
 module.exports = router;
 module.exports.scheduleDailyMomento = scheduleDailyMomento;
-00000)}h`);
-}
-
-module.exports = router;
-module.exports.scheduleDailyMomento = scheduleDailyMomento;
