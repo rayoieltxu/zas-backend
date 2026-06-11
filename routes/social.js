@@ -95,4 +95,26 @@ router.get('/following/:id', auth, async (req, res) => {
   }
 });
 
+// ─── GET /social/mutual/:id — seguidores en común ────────────────────────────
+router.get('/mutual/:id', auth, async (req, res) => {
+  try {
+    // Gente que me sigue A MÍ y también sigue al :id
+    const result = await pool.query(
+      `SELECT u.id, u.public_name, u.karma, u.avatar_url,
+              EXISTS(SELECT 1 FROM follows WHERE follower_id=$1 AND following_id=u.id) AS is_following
+       FROM follows f1
+       JOIN follows f2 ON f2.follower_id = f1.follower_id AND f2.following_id = $2
+       JOIN users u ON u.id = f1.follower_id
+       WHERE f1.following_id = $1
+         AND u.id != $1 AND u.id != $2
+       ORDER BY u.karma DESC
+       LIMIT 20`,
+      [req.user.id, req.params.id]
+    );
+    res.json({ mutual: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;
