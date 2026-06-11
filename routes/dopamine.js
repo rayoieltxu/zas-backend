@@ -522,4 +522,3 @@ module.exports.checkAchievements  = checkAchievements;
 module.exports.scheduleDuelResolution = scheduleDuelResolution;
 module.exports.karmaToLevel       = karmaToLevel;
 module.exports.levelProgress      = levelProgress;
-                     

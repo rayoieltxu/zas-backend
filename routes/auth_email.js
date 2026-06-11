@@ -60,7 +60,7 @@ router.post('/register', async (req, res) => {
     // Enviar email de verificación
     const verifyUrl = `${APP_URL}/auth/verify/${verifyToken}`;
     await resend.emails.send({
-      from: 'Zas App <onboarding@resend.dev>',
+      from: process.env.EMAIL_FROM || 'Zas App <onboarding@resend.dev>',
       to:   email,
       subject: '✅ Verifica tu cuenta de Zas',
       html: `
@@ -205,7 +205,7 @@ router.post('/resend-verification', async (req, res) => {
 
     const verifyUrl = `${APP_URL}/auth/verify/${verifyToken}`;
     await resend.emails.send({
-      from: 'Zas App <onboarding@resend.dev>',
+      from: process.env.EMAIL_FROM || 'Zas App <onboarding@resend.dev>',
       to:   email,
       subject: '✅ Verifica tu cuenta de Zas',
       html: `<p>Hola ${user.public_name}, <a href="${verifyUrl}">verifica tu email aquí</a>. Expira en 24h.</p>`,
@@ -240,7 +240,7 @@ router.post('/forgot-password', async (req, res) => {
 
     const resetUrl = `${APP_URL}/auth/reset-password/${resetToken}`;
     await resend.emails.send({
-      from: 'Zas App <onboarding@resend.dev>',
+      from: process.env.EMAIL_FROM || 'Zas App <onboarding@resend.dev>',
       to:   email,
       subject: '🔑 Recupera tu contraseña de Zas',
       html: `
@@ -319,6 +319,24 @@ router.post('/reset-password/:token', express.urlencoded({ extended: false }), a
   } catch (err) {
     console.error('Reset password error:', err);
     res.status(500).send('Error interno');
+  }
+});
+
+// ── GET /auth/admin-verify?email=X&secret=Y — TEMPORAL, borrar tras usar ──────
+router.get('/admin-verify', async (req, res) => {
+  const { email, secret } = req.query;
+  if (secret !== process.env.ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
+  if (!email) return res.status(400).json({ error: 'Email requerido' });
+  try {
+    const result = await pool.query(
+      `UPDATE users SET email_verified=true, verify_token=NULL, verify_expires=NULL
+       WHERE email=$1 RETURNING id, public_name, email`,
+      [email.toLowerCase()]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
+    res.json({ ok: true, user: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

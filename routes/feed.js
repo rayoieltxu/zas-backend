@@ -70,7 +70,9 @@ router.get('/', auth, async (req, res) => {
          AND p.created_at > NOW() - INTERVAL '3 days'
          AND p.is_chaos = false
          ${image_only === 'true' ? 'AND p.image_url IS NOT NULL' : ''}
-         ${video_only === 'true' ? 'AND p.video_url IS NOT NULL' : ''}
+         ${video_only === 'true'
+           ? 'AND p.video_url IS NOT NULL'
+           : 'AND p.video_url IS NULL'}
        GROUP BY p.id, u.public_name, u.karma, u.avatar_url, v.value, p.user_id
        ORDER BY p.created_at DESC
        LIMIT $3 OFFSET $4`,
