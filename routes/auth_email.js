@@ -37,6 +37,9 @@ router.post('/register', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 12);
 
+    // Liberar device_id si pertenece a otra cuenta
+    await pool.query('UPDATE users SET device_id=NULL WHERE device_id=$1', [device_id]);
+
     // Crear usuario con email ya verificado (sin paso de verificación por email)
     const result = await pool.query(
       `INSERT INTO users
@@ -123,7 +126,8 @@ router.post('/login', async (req, res) => {
         email: user.email,
       });
 
-    // Actualizar device_id y geohash
+    // Desvincular device_id de cualquier otra cuenta y asignarlo a ésta
+    await pool.query('UPDATE users SET device_id=NULL WHERE device_id=$1 AND id != $2', [device_id, user.id]);
     await pool.query(
       'UPDATE users SET device_id=$1, current_geohash=$2, last_active=NOW() WHERE id=$3',
       [device_id, geohash || user.current_geohash, user.id]
