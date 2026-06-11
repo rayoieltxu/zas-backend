@@ -35,19 +35,17 @@ router.post('/register', async (req, res) => {
     if (existing.rows.length > 0)
       return res.status(409).json({ error: 'Este email ya está registrado' });
 
-    const passwordHash  = await bcrypt.hash(password, 12);
-    const verifyToken   = randomToken();
-    const verifyExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
+    const passwordHash = await bcrypt.hash(password, 12);
 
-    // Crear usuario
+    // Crear usuario con email ya verificado (sin paso de verificación por email)
     const result = await pool.query(
       `INSERT INTO users
          (email, password_hash, public_name, current_geohash, device_id,
-          is_under_16, email_verified, verify_token, verify_expires)
-       VALUES ($1,$2,$3,$4,$5,$6,false,$7,$8)
+          is_under_16, email_verified)
+       VALUES ($1,$2,$3,$4,$5,$6,true)
        RETURNING id, public_name, email, karma, created_at, current_geohash, radius_km, is_under_16`,
       [email.toLowerCase(), passwordHash, public_name.trim(), geohash,
-       device_id, is_under_16 || false, verifyToken, verifyExpires]
+       device_id, is_under_16 || false]
     );
     const user = result.rows[0];
 
@@ -57,31 +55,8 @@ router.post('/register', async (req, res) => {
       pool.query('INSERT INTO user_streaks (user_id) VALUES ($1) ON CONFLICT DO NOTHING', [user.id]),
     ]);
 
-    // Enviar email de verificación
-    const verifyUrl = `${APP_URL}/auth/verify/${verifyToken}`;
-    await resend.emails.send({
-      from: process.env.EMAIL_FROM || 'Zas App <onboarding@resend.dev>',
-      to:   email,
-      subject: '✅ Verifica tu cuenta de Zas',
-      html: `
-        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
-          <h1 style="font-size:32px;font-weight:900;letter-spacing:6px;color:#0F1419">ZAS</h1>
-          <h2 style="color:#0F1419">Hola ${public_name} 👋</h2>
-          <p style="color:#536471;font-size:16px">Ya casi estás. Verifica tu email para empezar a usar Zas en tu zona.</p>
-          <a href="${verifyUrl}"
-             style="display:inline-block;margin:24px 0;padding:14px 28px;
-                    background:#1D9BF0;color:#fff;text-decoration:none;
-                    border-radius:24px;font-weight:700;font-size:16px">
-            Verificar email →
-          </a>
-          <p style="color:#8B98A5;font-size:13px">El enlace expira en 24 horas.</p>
-          <p style="color:#8B98A5;font-size:13px">Si no creaste esta cuenta, ignora este email.</p>
-        </div>
-      `,
-    });
-
     res.status(201).json({
-      message: 'Cuenta creada. Revisa tu email para verificarla.',
+      message: 'Cuenta creada.',
       user_id: user.id,
     });
   } catch (err) {
@@ -322,22 +297,5 @@ router.post('/reset-password/:token', express.urlencoded({ extended: false }), a
   }
 });
 
-// ── GET /auth/admin-verify?email=X&secret=Y — TEMPORAL, borrar tras usar ──────
-router.get('/admin-verify', async (req, res) => {
-  const { email, secret } = req.query;
-  if (secret !== process.env.ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
-  if (!email) return res.status(400).json({ error: 'Email requerido' });
-  try {
-    const result = await pool.query(
-      `UPDATE users SET email_verified=true, verify_token=NULL, verify_expires=NULL
-       WHERE email=$1 RETURNING id, public_name, email`,
-      [email.toLowerCase()]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
-    res.json({ ok: true, user: result.rows[0] });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 module.exports = router;
