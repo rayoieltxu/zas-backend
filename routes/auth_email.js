@@ -302,4 +302,16 @@ router.post('/reset-password/:token', express.urlencoded({ extended: false }), a
 });
 
 
+// ── POST /auth/logout ─────────────────────────────────────────────────────────
+router.post('/logout', async (req, res) => {
+  const deviceId = req.headers['x-device-id'];
+  if (!deviceId) return res.status(400).json({ error: 'Device ID requerido' });
+  try {
+    await pool.query('UPDATE users SET device_id=NULL WHERE device_id=$1', [deviceId]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
