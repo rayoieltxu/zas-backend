@@ -293,8 +293,8 @@ router.get('/zona-en-llamas', auth, async (req, res) => {
     if (!zone) return res.json({ active: false });
     // Actividad en la zona en la última hora
     const { rows } = await pool.query(
-      `SELECT COUNT(*) FROM posts WHERE LEFT(geohash_zone, 4) = $1 AND created_at > NOW() - INTERVAL '1 hour'`,
-      [zone.slice(0, 4)]
+      `SELECT COUNT(*) FROM posts WHERE geohash_zone = $1 AND created_at > NOW() - INTERVAL '1 hour'`,
+      [zone]
     );
     const count = parseInt(rows[0].count);
     const active = count >= 5; // umbral: 5 posts en 1h (ajustado para zonas pequeñas)
@@ -522,3 +522,4 @@ module.exports.checkAchievements  = checkAchievements;
 module.exports.scheduleDuelResolution = scheduleDuelResolution;
 module.exports.karmaToLevel       = karmaToLevel;
 module.exports.levelProgress      = levelProgress;
+                     
