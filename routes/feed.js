@@ -66,7 +66,7 @@ router.get('/', auth, async (req, res) => {
          FROM post_reactions
          GROUP BY post_id, emoji
        ) pr ON pr.post_id = p.id
-       WHERE p.geohash_zone LIKE $2
+       WHERE (p.geohash_zone LIKE $2 OR p.user_id = $1)
          AND p.created_at > NOW() - INTERVAL '3 days'
          AND p.is_chaos = false
          ${image_only === 'true' ? 'AND p.image_url IS NOT NULL' : ''}
