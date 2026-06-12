@@ -228,7 +228,8 @@ router.post('/avatar', auth, async (req, res) => {
       folder:         'zas_avatars',
       public_id:      `avatar_${req.user.id}`,
       overwrite:      true,
-      transformation: [{ width: 200, height: 200, crop: 'fill', gravity: 'face' }],
+      format:         'jpg',
+      transformation: [{ width: 200, height: 200, crop: 'fill', gravity: 'face', format: 'jpg' }],
     });
     await pool.query('UPDATE users SET avatar_url=$1 WHERE id=$2', [result.secure_url, req.user.id]);
     res.json({ avatar_url: result.secure_url, ok: true });
