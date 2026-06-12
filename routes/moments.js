@@ -7,10 +7,12 @@ const pool    = require('../db/pool');
 const auth    = require('../middleware/auth');
 const { sendPush } = require('../services/push');
 
-const WINDOW_MINUTES = 5;
-const FEED_HOURS     = 24;
-const MOMENT_COINS   = 30;  // monedas por subir a tiempo
-const MOMENT_KARMA   = 10;  // karma extra
+const WINDOW_MINUTES  = 5;
+const FEED_HOURS      = 24;
+const MOMENT_COINS    = 30;  // monedas por subir en ventana bonus
+const MOMENT_KARMA    = 10;  // karma por subir en ventana bonus
+const NORMAL_COINS    = 5;   // monedas por subir fuera de ventana
+const NORMAL_KARMA    = 2;   // karma por subir fuera de ventana
 
 // ── GET /moments/status ───────────────────────────────────────────────────────
 // Devuelve si hay ventana activa ahora y si el usuario ya subió su foto hoy
@@ -18,26 +20,35 @@ router.get('/status', auth, async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0, 10);
     const windowRes = await pool.query(
-      `SELECT * FROM moment_windows WHERE date=$1`,
-      [today]
+      `SELECT * FROM moment_windows WHERE date=$1`, [today]
     );
     const win = windowRes.rows[0];
-    if (!win) return res.json({ active: false, submitted: false });
-
     const now = new Date();
-    const active    = now >= new Date(win.started_at) && now <= new Date(win.expires_at);
-    const submitted = !!(await pool.query(
-      `SELECT 1 FROM zas_moments WHERE user_id=$1 AND window_id=$2`,
-      [req.user.id, win.id]
-    )).rows.length;
+
+    // ¿Ya subió hoy? buscar por fecha (user puede no tener window todavía)
+    const submittedRes = await pool.query(
+      `SELECT 1 FROM zas_moments
+       WHERE user_id=$1 AND created_at::date = $2::date`,
+      [req.user.id, today]
+    );
+    const submitted = submittedRes.rows.length > 0;
+
+    // Bonus activo = dentro de los WINDOW_MINUTES del momento
+    const bonusActive = win
+      ? (now >= new Date(win.started_at) && now <= new Date(win.expires_at))
+      : false;
 
     res.json({
-      active,
+      active:       bonusActive,   // alias para compatibilidad frontend
+      bonus_active: bonusActive,
+      can_submit:   !submitted,
       submitted,
-      window_id:  win.id,
-      started_at: win.started_at,
-      expires_at: win.expires_at,
-      seconds_left: active ? Math.max(0, Math.floor((new Date(win.expires_at) - now) / 1000)) : 0,
+      window_id:    win?.id || null,
+      started_at:   win?.started_at || null,
+      expires_at:   win?.expires_at || null,
+      seconds_left: bonusActive
+        ? Math.max(0, Math.floor((new Date(win.expires_at) - now) / 1000))
+        : 0,
     });
   } catch (err) {
     console.error('Moments status error:', err);
@@ -53,38 +64,48 @@ router.post('/', auth, async (req, res) => {
 
   try {
     const today = new Date().toISOString().slice(0, 10);
-    const winRes = await pool.query(
-      `SELECT * FROM moment_windows WHERE id=$1 AND date=$2`,
-      [window_id, today]
+    const now   = new Date();
+
+    // ¿Ya subió hoy?
+    const alreadyRes = await pool.query(
+      `SELECT 1 FROM zas_moments WHERE user_id=$1 AND created_at::date = $2::date`,
+      [req.user.id, today]
     );
-    const win = winRes.rows[0];
-    if (!win) return res.status(404).json({ error: 'Ventana no encontrada' });
+    if (alreadyRes.rows.length)
+      return res.status(409).json({ error: 'Ya subiste tu momento hoy' });
 
-    const now = new Date();
-    if (now > new Date(win.expires_at))
-      return res.status(410).json({ error: 'La ventana ha expirado', code: 'WINDOW_EXPIRED' });
+    // Buscar ventana de hoy (puede no existir si no ha llegado aún)
+    const winRes = await pool.query(
+      `SELECT * FROM moment_windows WHERE date=$1`, [today]
+    );
+    const win = winRes.rows[0] || null;
 
-    const zone     = req.user.current_geohash;
+    // ¿El usuario subió DURANTE la ventana bonus?
+    const inBonus = win
+      ? (now >= new Date(win.started_at) && now <= new Date(win.expires_at))
+      : false;
+
+    const coins = inBonus ? MOMENT_COINS : NORMAL_COINS;
+    const karma = inBonus ? MOMENT_KARMA : NORMAL_KARMA;
+
+    const zone      = req.user.current_geohash;
     const feedUntil = new Date(Date.now() + FEED_HOURS * 3600 * 1000);
 
+    // Insertar momento — si hay window, adjuntarla; si no, window_id = null
+    // La unicidad la garantizamos con la comprobación de fecha de arriba
     const result = await pool.query(
       `INSERT INTO zas_moments (user_id, window_id, image_url, caption, zone, feed_until, location_name)
        VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (user_id, window_id) DO NOTHING
        RETURNING *`,
-      [req.user.id, win.id, image_url, caption?.trim() || null, zone, feedUntil, location_name?.trim() || null]
+      [req.user.id, win?.id || null, image_url, caption?.trim() || null, zone, feedUntil, location_name?.trim() || null]
     );
-    if (!result.rows.length)
-      return res.status(409).json({ error: 'Ya subiste tu momento hoy' });
-
     const moment = result.rows[0];
 
-    // Recompensas: monedas + karma
+    // Recompensas
     await Promise.all([
-      pool.query(`INSERT INTO user_coins (user_id,coins) VALUES ($1,$2) ON CONFLICT (user_id) DO UPDATE SET coins=user_coins.coins+$2`, [req.user.id, MOMENT_COINS]),
-      pool.query(`INSERT INTO coin_transactions (user_id,delta,reason) VALUES ($1,$2,'momento_zas')`, [req.user.id, MOMENT_COINS]),
-      pool.query(`UPDATE users SET karma=karma+$1 WHERE id=$2`, [MOMENT_KARMA, req.user.id]),
-      // Actualizar racha de momentos
+      pool.query(`INSERT INTO user_coins (user_id,coins) VALUES ($1,$2) ON CONFLICT (user_id) DO UPDATE SET coins=user_coins.coins+$2`, [req.user.id, coins]),
+      pool.query(`INSERT INTO coin_transactions (user_id,delta,reason) VALUES ($1,$2,'momento_zas')`, [req.user.id, coins]),
+      pool.query(`UPDATE users SET karma=karma+$1 WHERE id=$2`, [karma, req.user.id]),
       pool.query(`
         UPDATE user_streaks
         SET momento_streak = CASE WHEN last_momento = CURRENT_DATE - 1 THEN momento_streak+1 ELSE 1 END,
@@ -102,7 +123,7 @@ router.post('/', auth, async (req, res) => {
       });
     }
 
-    res.status(201).json({ moment, coins_earned: MOMENT_COINS, karma_earned: MOMENT_KARMA });
+    res.status(201).json({ moment, coins_earned: coins, karma_earned: karma, bonus: inBonus });
   } catch (err) {
     console.error('Moments upload error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -143,7 +164,7 @@ router.get('/album', auth, async (req, res) => {
       `SELECT zm.id, zm.image_url, zm.caption, zm.location_name, zm.created_at, zm.zone,
               mw.started_at AS moment_time
        FROM zas_moments zm
-       JOIN moment_windows mw ON mw.id = zm.window_id
+       LEFT JOIN moment_windows mw ON mw.id = zm.window_id
        WHERE zm.user_id = $1
        ORDER BY zm.created_at DESC`,
       [userId]
