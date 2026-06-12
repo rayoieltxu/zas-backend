@@ -51,6 +51,7 @@ router.post('/image', auth, async (req, res) => {
     formData.append('timestamp',  String(timestamp));
     formData.append('public_id',  publicId);
     formData.append('folder',     `zas/${folder}`);
+    formData.append('format',     'jpg');   // forzar JPEG para compatibilidad iOS
     formData.append('signature',  signature);
 
     const response = await fetch(
@@ -92,17 +93,30 @@ router.post('/video', auth, videoUpload.single('video'), async (req, res) => {
 
     const result = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
-        { resource_type: 'video', public_id: publicId, folder: `zas/${folder}` },
+        {
+          resource_type: 'video',
+          public_id:     publicId,
+          folder:        `zas/${folder}`,
+          transformation: [
+            { video_codec: 'h264', audio_codec: 'aac', quality: 'auto' },
+          ],
+          eager: [
+            { video_codec: 'h264', audio_codec: 'aac', format: 'mp4' },
+          ],
+          eager_async: false,
+        },
         (err, result) => (err ? reject(err) : resolve(result))
       );
       Readable.from(req.file.buffer).pipe(stream);
     });
 
-    const thumbnail = result.secure_url
+    // Preferir la versión eager (H.264/AAC garantizado para iOS)
+    const videoUrl  = result.eager?.[0]?.secure_url || result.secure_url;
+    const thumbnail = videoUrl
       .replace('/upload/', '/upload/so_0/')
       .replace(/\.\w+$/, '.jpg');
 
-    res.json({ url: result.secure_url, thumbnail });
+    res.json({ url: videoUrl, thumbnail });
   } catch (err) {
     console.error('Video upload error:', err);
     res.status(500).json({ error: err.message || 'Error interno al subir vídeo' });
