@@ -56,7 +56,7 @@ async function unlockAchievement(client, userId, key) {
            ON CONFLICT (user_id) DO UPDATE SET coins = user_coins.coins + EXCLUDED.coins`,
           [userId, rows[0].coins]
         );
-        sendPush(userId, { title: '🏆 ¡Logro desbloqueado!', body: `${rows[0].icon} ${rows[0].name} — +${rows[0].coins} 🪙` });
+        sendPush(userId, { title: '🏆 ¡Logro desbloqueado!', body: `${rows[0].icon} ${rows[0].name} — +${rows[0].coins} €` });
         return rows[0];
       }
     }
@@ -319,7 +319,7 @@ router.post('/duel', auth, async (req, res) => {
     const { rows: myCoinsRow } = await client.query(`SELECT COALESCE(coins,0) as coins FROM user_coins WHERE user_id=$1`, [req.user.id]);
     const myCoins = myCoinsRow[0]?.coins ?? 0;
     if (!myRows[0] || myCoins < stake_coins) {
-      return res.status(400).json({ error: `Necesitas ${stake_coins} 🪙 para retar` });
+      return res.status(400).json({ error: `Necesitas ${stake_coins} € para retar` });
     }
 
     // No puede haber duelo activo entre ellos
@@ -348,7 +348,7 @@ router.post('/duel', auth, async (req, res) => {
     await client.query('COMMIT');
 
     // Push al retado
-    sendPush(challenged_id, { title: '⚔️ ¡Te han retado!', body: `${myRows[0].public_name} te desafía a un duelo de karma. Apuesta: ${stake_coins} 🪙` });
+    sendPush(challenged_id, { title: '⚔️ ¡Te han retado!', body: `${myRows[0].public_name} te desafía a un duelo de karma. Apuesta: ${stake_coins} €` });
 
     // Logro primer duelo retador
     await unlockAchievement(client, req.user.id, 'first_duel');
@@ -375,7 +375,7 @@ router.put('/duel/:id/accept', auth, async (req, res) => {
     // Reservar monedas del retado
     const { rows: myCoinsRow } = await client.query(`SELECT COALESCE(coins,0) as coins FROM user_coins WHERE user_id=$1`, [req.user.id]);
     if ((myCoinsRow[0]?.coins ?? 0) < duel.stake_coins) {
-      return res.status(400).json({ error: `Necesitas ${duel.stake_coins} 🪙 para aceptar` });
+      return res.status(400).json({ error: `Necesitas ${duel.stake_coins} € para aceptar` });
     }
 
     await client.query('BEGIN');
@@ -490,7 +490,7 @@ async function resolveDuel(duelId) {
     await client.query('COMMIT');
 
     // Push
-    sendPush(winnerId, { title: '⚔️ ¡Ganaste el duelo!', body: `Has ganado ${prize} 🪙. ¡Campeón!` });
+    sendPush(winnerId, { title: '⚔️ ¡Ganaste el duelo!', body: `Has ganado ${prize} €. ¡Campeón!` });
     sendPush(loserId,  { title: '⚔️ Duelo terminado',    body: `${winnerName} ganó esta vez. ¡Révatele!` });
 
     // Logros

@@ -42,7 +42,7 @@ router.post('/daily-bonus', auth, async (req, res) => {
       `INSERT INTO coin_transactions (user_id, delta, reason) VALUES ($1,$2,'daily_bonus')`,
       [req.user.id, bonus]
     );
-    res.json({ ok: true, bonus, streak, message: `+${bonus} 🪙 Bonus diario` });
+    res.json({ ok: true, bonus, streak, message: `+${bonus} € Bonus diario` });
   } catch (err) {
     console.error('Daily bonus error:', err);
     res.status(500).json({ error: 'Internal server error' });

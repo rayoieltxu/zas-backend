@@ -125,7 +125,7 @@ router.get('/chaos', auth, async (req, res) => {
 
 // ─── POST /feed ───────────────────────────────────────────────────────────────
 router.post('/', auth, async (req, res) => {
-  const { text, image_url, video_url, video_thumbnail, is_anonymous = false } = req.body;
+  const { text, image_url, video_url, video_thumbnail, is_anonymous = false, geohash_zone } = req.body;
   if (!text?.trim() && !image_url && !video_url) return res.status(400).json({ error: 'text, image o video requerido' });
   if (text && text.trim().length > 500) return res.status(400).json({ error: 'Max 500 chars' });
   if (req.user.is_visitor) return res.status(403).json({ error: 'Visitantes no pueden publicar', code: 'VISITOR_RESTRICTION' });
@@ -140,7 +140,7 @@ router.post('/', auth, async (req, res) => {
       `INSERT INTO posts (user_id, text, image_url, video_url, video_thumbnail, is_anonymous, geohash_zone, is_chaos)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       [req.user.id, text?.trim() || '', image_url || null, video_url || null, video_thumbnail || null,
-       Boolean(is_anonymous), req.user.current_geohash, isChaos]
+       Boolean(is_anonymous), geohash_zone || req.user.current_geohash, isChaos]
     );
     const post = {
       ...result.rows[0],
