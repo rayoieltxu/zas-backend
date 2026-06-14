@@ -43,9 +43,17 @@ CREATE TABLE IF NOT EXISTS challenges (
     goal_value   INT  NOT NULL,
     reward_coins INT  DEFAULT 0,
     reward_karma INT  DEFAULT 0,
-    badge_name   VARCHAR(50),           -- NULL si no da badge
-    UNIQUE(name, type)
+    badge_name   VARCHAR(50)            -- NULL si no da badge
 );
+
+-- Añadir constraint si no existe (para BDs creadas antes de este fix)
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'challenges_name_type_unique'
+  ) THEN
+    ALTER TABLE challenges ADD CONSTRAINT challenges_name_type_unique UNIQUE (name, type);
+  END IF;
+END $$;
 
 INSERT INTO challenges (name, description, type, metric, goal_value, reward_coins, reward_karma, badge_name) VALUES
   ('Escritor del día',      'Publica 3 posts hoy',                    'daily',   'posts_created',    3,  10,  5,   NULL),
