@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS challenges (
     goal_value   INT  NOT NULL,
     reward_coins INT  DEFAULT 0,
     reward_karma INT  DEFAULT 0,
-    badge_name   VARCHAR(50)            -- NULL si no da badge
+    badge_name   VARCHAR(50),           -- NULL si no da badge
+    UNIQUE(name, type)
 );
 
 INSERT INTO challenges (name, description, type, metric, goal_value, reward_coins, reward_karma, badge_name) VALUES
