@@ -1,16 +1,36 @@
 /**
  * routes/auth_email.js
  * Registro, login, verificación y recuperación de contraseña con email
+ * Email: Brevo SMTP vía nodemailer
  */
-const express  = require('express');
-const router   = express.Router();
-const pool     = require('../db/pool');
-const bcrypt   = require('bcryptjs');
-const crypto   = require('crypto');
-const { Resend } = require('resend');
+const express      = require('express');
+const router       = express.Router();
+const pool         = require('../db/pool');
+const bcrypt       = require('bcryptjs');
+const crypto       = require('crypto');
+const nodemailer   = require('nodemailer');
 
-const resend = new Resend(process.env.RESEND_API_KEY);
 const APP_URL = process.env.APP_URL || 'https://zas-backend-9uml.onrender.com';
+
+// ── Transporte SMTP (Brevo) ───────────────────────────────────────────────────
+const transporter = nodemailer.createTransport({
+  host:   process.env.SMTP_HOST || 'smtp-relay.brevo.com',
+  port:   parseInt(process.env.SMTP_PORT || '587'),
+  secure: false,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
+async function sendEmail({ to, subject, html }) {
+  await transporter.sendMail({
+    from:    process.env.EMAIL_FROM || '"Zas App" <noreply@zas.app>',
+    to,
+    subject,
+    html,
+  });
+}
 
 function randomToken() {
   return crypto.randomBytes(32).toString('hex');
@@ -30,25 +50,25 @@ router.post('/register', async (req, res) => {
     return res.status(400).json({ error: 'Email inválido' });
 
   try {
-    // Comprobar email duplicado
     const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
     if (existing.rows.length > 0)
       return res.status(409).json({ error: 'Este email ya está registrado' });
 
     const passwordHash = await bcrypt.hash(password, 12);
+    const verifyToken  = randomToken();
+    const verifyExp    = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
 
     // Liberar device_id si pertenece a otra cuenta
     await pool.query('UPDATE users SET device_id=NULL WHERE device_id=$1', [device_id]);
 
-    // Crear usuario con email ya verificado (sin paso de verificación por email)
     const result = await pool.query(
       `INSERT INTO users
          (email, password_hash, public_name, current_geohash, device_id,
-          is_under_16, email_verified)
-       VALUES ($1,$2,$3,$4,$5,$6,true)
-       RETURNING id, public_name, email, karma, created_at, current_geohash, radius_km, is_under_16`,
+          is_under_16, email_verified, verify_token, verify_expires)
+       VALUES ($1,$2,$3,$4,$5,$6,false,$7,$8)
+       RETURNING id, public_name, email`,
       [email.toLowerCase(), passwordHash, public_name.trim(), geohash,
-       device_id, is_under_16 || false]
+       device_id, is_under_16 || false, verifyToken, verifyExp]
     );
     const user = result.rows[0];
 
@@ -58,9 +78,30 @@ router.post('/register', async (req, res) => {
       pool.query('INSERT INTO user_streaks (user_id) VALUES ($1) ON CONFLICT DO NOTHING', [user.id]),
     ]);
 
+    // Enviar email de verificación
+    const verifyUrl = `${APP_URL}/auth/verify/${verifyToken}`;
+    await sendEmail({
+      to:      email,
+      subject: '✅ Verifica tu cuenta de Zas',
+      html: `
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
+          <h1 style="font-size:32px;font-weight:900;letter-spacing:6px;color:#0F1419">ZAS</h1>
+          <p style="color:#536471;font-size:16px">Hola <strong>${user.public_name}</strong>,</p>
+          <p style="color:#536471">Para activar tu cuenta haz clic en el botón. El enlace expira en 24 horas.</p>
+          <a href="${verifyUrl}"
+             style="display:inline-block;margin:24px 0;padding:14px 28px;
+                    background:#0F1419;color:#fff;text-decoration:none;
+                    border-radius:24px;font-weight:700;font-size:16px">
+            Verificar email →
+          </a>
+          <p style="color:#8899A6;font-size:13px">Si no creaste esta cuenta, ignora este mensaje.</p>
+        </div>
+      `,
+    });
+
     res.status(201).json({
-      message: 'Cuenta creada.',
-      user_id: user.id,
+      message: 'Cuenta creada. Revisa tu email para verificarla.',
+      email_pending_verification: true,
     });
   } catch (err) {
     console.error('Register error:', err);
@@ -91,7 +132,7 @@ router.get('/verify/:token', async (req, res) => {
       <html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#f7f9f9">
         <h1 style="font-size:48px;letter-spacing:8px;color:#0F1419">ZAS</h1>
         <h2 style="color:#00BA7C">✅ Email verificado</h2>
-        <p style="color:#536471;font-size:18px">¡Bienvenido/a, ${result.rows[0].public_name}!<br>Ya puedes abrir la app y empezar.</p>
+        <p style="color:#536471;font-size:18px">¡Bienvenido/a, ${result.rows[0].public_name}!<br>Ya puedes abrir la app e iniciar sesión.</p>
       </body></html>
     `);
   } catch (err) {
@@ -126,14 +167,12 @@ router.post('/login', async (req, res) => {
         email: user.email,
       });
 
-    // Desvincular device_id de cualquier otra cuenta y asignarlo a ésta
     await pool.query('UPDATE users SET device_id=NULL WHERE device_id=$1 AND id != $2', [device_id, user.id]);
     await pool.query(
       'UPDATE users SET device_id=$1, current_geohash=$2, last_active=NOW() WHERE id=$3',
       [device_id, geohash || user.current_geohash, user.id]
     );
 
-    // Cargar coins y streak
     const [coinsRow, streakRow] = await Promise.all([
       pool.query('SELECT coins FROM user_coins WHERE user_id=$1', [user.id]),
       pool.query('SELECT * FROM user_streaks WHERE user_id=$1', [user.id]),
@@ -183,9 +222,8 @@ router.post('/resend-verification', async (req, res) => {
     );
 
     const verifyUrl = `${APP_URL}/auth/verify/${verifyToken}`;
-    await resend.emails.send({
-      from: process.env.EMAIL_FROM || 'Zas App <onboarding@resend.dev>',
-      to:   email,
+    await sendEmail({
+      to:      email,
       subject: '✅ Verifica tu cuenta de Zas',
       html: `<p>Hola ${user.public_name}, <a href="${verifyUrl}">verifica tu email aquí</a>. Expira en 24h.</p>`,
     });
@@ -204,7 +242,6 @@ router.post('/forgot-password', async (req, res) => {
 
   try {
     const result = await pool.query('SELECT * FROM users WHERE email=$1', [email.toLowerCase()]);
-    // Siempre responder OK para no revelar si el email existe
     if (result.rows.length === 0)
       return res.json({ message: 'Si el email existe recibirás un enlace' });
 
@@ -218,9 +255,8 @@ router.post('/forgot-password', async (req, res) => {
     );
 
     const resetUrl = `${APP_URL}/auth/reset-password/${resetToken}`;
-    await resend.emails.send({
-      from: process.env.EMAIL_FROM || 'Zas App <onboarding@resend.dev>',
-      to:   email,
+    await sendEmail({
+      to:      email,
       subject: '🔑 Recupera tu contraseña de Zas',
       html: `
         <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
@@ -243,7 +279,7 @@ router.post('/forgot-password', async (req, res) => {
   }
 });
 
-// ── GET /auth/reset-password/:token — formulario web ─────────────────────────
+// ── GET /auth/reset-password/:token ──────────────────────────────────────────
 router.get('/reset-password/:token', async (req, res) => {
   const { token } = req.params;
   const result = await pool.query(
@@ -300,7 +336,6 @@ router.post('/reset-password/:token', express.urlencoded({ extended: false }), a
     res.status(500).send('Error interno');
   }
 });
-
 
 // ── POST /auth/logout ─────────────────────────────────────────────────────────
 router.post('/logout', async (req, res) => {
