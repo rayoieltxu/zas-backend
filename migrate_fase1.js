@@ -46,21 +46,18 @@ CREATE TABLE IF NOT EXISTS challenges (
     badge_name   VARCHAR(50)            -- NULL si no da badge
 );
 
--- Añadir constraint si no existe (para BDs creadas antes de este fix)
-DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'challenges_name_type_unique'
-  ) THEN
-    ALTER TABLE challenges ADD CONSTRAINT challenges_name_type_unique UNIQUE (name, type);
-  END IF;
-END $$;
-
-INSERT INTO challenges (name, description, type, metric, goal_value, reward_coins, reward_karma, badge_name) VALUES
-  ('Escritor del día',      'Publica 3 posts hoy',                    'daily',   'posts_created',    3,  10,  5,   NULL),
-  ('Popular del día',       'Consigue 5 upvotes hoy',                 'daily',   'upvotes_received', 5,  15,  10,  NULL),
-  ('Influencer semanal',    'Consigue 50 upvotes esta semana',         'weekly',  'upvotes_received', 50, 100, 25,  'Popular'),
-  ('Leyenda del mes',       'Acumula más karma que 90% de tu zona',   'monthly', 'karma_rank',        1,  500, 100, 'Leyenda')
-ON CONFLICT (name, type) DO NOTHING;
+-- Insertar challenges solo si no existen (sin depender de constraint por nombre)
+INSERT INTO challenges (name, description, type, metric, goal_value, reward_coins, reward_karma, badge_name)
+SELECT v.name, v.description, v.type::VARCHAR, v.metric, v.goal_value, v.reward_coins, v.reward_karma, v.badge_name
+FROM (VALUES
+  ('Escritor del día',   'Publica 3 posts hoy',                  'daily',   'posts_created',    3,  10,  5,   NULL),
+  ('Popular del día',    'Consigue 5 upvotes hoy',               'daily',   'upvotes_received', 5,  15,  10,  NULL),
+  ('Influencer semanal', 'Consigue 50 upvotes esta semana',      'weekly',  'upvotes_received', 50, 100, 25,  'Popular'),
+  ('Leyenda del mes',    'Acumula más karma que 90% de tu zona', 'monthly', 'karma_rank',        1,  500, 100, 'Leyenda')
+) AS v(name, description, type, metric, goal_value, reward_coins, reward_karma, badge_name)
+WHERE NOT EXISTS (
+  SELECT 1 FROM challenges c WHERE c.name = v.name AND c.type = v.type::VARCHAR
+);
 
 -- Progreso individual por periodo
 CREATE TABLE IF NOT EXISTS user_challenges (
