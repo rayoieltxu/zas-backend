@@ -1,39 +1,55 @@
 /**
  * routes/auth_email.js
  * Registro, login, verificación y recuperación de contraseña con email
- * Email: Brevo SMTP vía nodemailer
+ * Email: Resend HTTP API (evita bloqueo de puertos SMTP en Render free)
  */
-const express      = require('express');
-const router       = express.Router();
-const pool         = require('../db/pool');
-const bcrypt       = require('bcryptjs');
-const crypto       = require('crypto');
-const nodemailer   = require('nodemailer');
+const express = require('express');
+const router  = express.Router();
+const pool    = require('../db/pool');
+const bcrypt  = require('bcryptjs');
+const crypto  = require('crypto');
+const https   = require('https');
 
 const APP_URL = process.env.APP_URL || 'https://zas-backend-9uml.onrender.com';
 
-// ── Transporte SMTP (Brevo) ───────────────────────────────────────────────────
-const smtpPort = parseInt(process.env.SMTP_PORT || '465');
-const transporter = nodemailer.createTransport({
-  host:   process.env.SMTP_HOST || 'smtp-relay.brevo.com',
-  port:   smtpPort,
-  secure: smtpPort === 465,   // true para 465 (SSL), false para 587 (STARTTLS)
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  connectionTimeout: 10000,
-  greetingTimeout:   10000,
-});
-
+// ── Email vía Resend HTTP API ─────────────────────────────────────────────────
 async function sendEmail({ to, subject, html }) {
-  const info = await transporter.sendMail({
-    from:    process.env.EMAIL_FROM || '"Zas App" <noreply@zas.app>',
-    to,
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) throw new Error('RESEND_API_KEY no configurada');
+
+  const body = JSON.stringify({
+    from:    process.env.EMAIL_FROM || 'ZAS App <onboarding@resend.dev>',
+    to:      [to],
     subject,
     html,
   });
-  console.log('📧 Email enviado a', to, '— messageId:', info.messageId);
+
+  await new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.resend.com',
+      path:     '/emails',
+      method:   'POST',
+      headers:  {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type':  'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          console.log('📧 Email enviado a', to, '— status:', res.statusCode);
+          resolve(data);
+        } else {
+          reject(new Error(`Resend error ${res.statusCode}: ${data}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
 }
 
 function randomToken() {
